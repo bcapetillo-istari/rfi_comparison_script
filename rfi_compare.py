@@ -38,10 +38,11 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+from dotenv import load_dotenv
 from istari_digital_client import Configuration
 from istari_digital_client.sdk import Istari
 
-EXTRACT_FUNCTION = "open_pdf:extract_tables"
+EXTRACT_FUNCTION = "@istari:extract_tables"
 
 HEADER_HINTS = {"id", "req", "requirement", "requirement id", "req id", "req_id"}
 
@@ -53,6 +54,7 @@ def log(msg: str) -> None:
 # ----------------------------------------------------------------------------
 # Table normalization (pure functions, no API access)
 # ----------------------------------------------------------------------------
+
 
 def looks_like_header(row: list) -> bool:
     if not row:
@@ -89,11 +91,14 @@ def iter_tables(data):
     if not isinstance(data, list) or not data:
         return
     first = data[0]
-    if isinstance(first, list) and first and isinstance(first[0], list):
-        for table in data:            # list of tables
+    if isinstance(first, dict):
+        for table in data:  # list of table objects, each with a 'rows' key
+            yield from iter_tables(table)
+    elif isinstance(first, list) and first and isinstance(first[0], list):
+        for table in data:  # list of tables
             yield table
     elif isinstance(first, list):
-        yield data                    # single table (list of rows)
+        yield data  # single table (list of rows)
 
 
 def rows_from_artifact(name: str, raw: bytes):
@@ -131,8 +136,10 @@ def compile_responses(rows, vendor: str):
             row.append("")
         rid, label, response = row
         if rid in responses:
-            log(f"warning: {vendor}: duplicate requirement ID {rid!r} — "
-                f"responses joined with ' | ' (check for a numbering typo)")
+            log(
+                f"warning: {vendor}: duplicate requirement ID {rid!r} — "
+                f"responses joined with ' | ' (check for a numbering typo)"
+            )
             responses[rid] = f"{responses[rid]} | {response}"
         else:
             responses[rid] = response
@@ -143,8 +150,7 @@ def compile_responses(rows, vendor: str):
 def build_matrix(vendors: list[tuple[str, dict]], labels: dict[str, str]):
     """Wide matrix: header of requirement IDs, label row, one row per vendor."""
     all_ids = sorted({rid for _, resp in vendors for rid in resp}, key=req_id_key)
-    rows = [["vendor", *all_ids],
-            ["", *(labels.get(rid, "") for rid in all_ids)]]
+    rows = [["vendor", *all_ids], ["", *(labels.get(rid, "") for rid in all_ids)]]
     for vendor, responses in vendors:
         rows.append([vendor, *(responses.get(rid, "") for rid in all_ids)])
     return rows
@@ -154,38 +160,77 @@ def build_matrix(vendors: list[tuple[str, dict]], labels: dict[str, str]):
 # Istari access
 # ----------------------------------------------------------------------------
 
+
+def type_name(resource_type) -> str:
+    """Normalize a resource type (plain string or enum like ResourceTypeDto.MODEL)."""
+    value = getattr(resource_type, "value", resource_type)
+    return str(value).split(".")[-1].upper()
+
+
+def get_branch(client: Istari, system_id: str, branch_name: str):
+    branches = {b.tag: b for b in client.systems.branches.list(system_id)}
+    if branch_name in branches:
+        return branches[branch_name]
+    if len(branches) == 1:
+        only = next(iter(branches.values()))
+        log(f"note: branch {branch_name!r} not found — using sole branch {only.tag!r}")
+        return only
+    raise SystemExit(
+        f"error: branch {branch_name!r} not found; " f"available: {sorted(branches)}"
+    )
+
+
 def list_response_models(client: Istari, system_id: str, branch_name: str, rfi_id: str):
     """Return the branch's MODEL resources, excluding the RFI document itself."""
-    branch = client.systems.branches.get(system_id, branch_name)
+    branch = get_branch(client, system_id, branch_name)
     models, skipped = [], []
     for tracked in client.systems.branches.list_files(branch):
-        if tracked.resource_type != "MODEL":
+        if type_name(tracked.resource_type) != "MODEL":
             continue
         if tracked.resource_id == rfi_id:
             skipped.append(tracked)
             continue
         models.append(tracked)
     if not skipped:
-        log(f"note: RFI {rfi_id} was not among the branch's models — "
-            f"treating all {len(models)} models as responses")
+        log(
+            f"note: RFI {rfi_id} was not among the branch's models — "
+            f"treating all {len(models)} models as responses"
+        )
     return models
 
 
-def find_table_artifacts(client: Istari, model) -> list:
-    """Extracted-table artifacts related to the model's current file revision."""
-    artifacts = []
+def find_table_artifacts(client: Istari, model, debug: bool = False) -> list:
+    """Extracted-table artifacts related to the model's current file revision.
+
+    Relationship sides are revision DTOs carrying the owning entity, not a
+    resource_id: an extraction output has owning_entity_type 'artifact' and
+    owning_entity_id pointing at the artifact resource.
+    """
+    artifacts, related, seen = [], [], set()
     for rel in client.resources.relationships.list(model.file_revision_id):
         for side in (rel.left_revision, rel.right_revision):
-            resource_id = getattr(side, "resource_id", None)
-            if not resource_id or resource_id == model.resource_id:
+            if side is None:
                 continue
-            resource = client.resources.get(resource_id)
-            if resource.resource_type != "ARTIFACT":
+            if getattr(side, "file_revision_id", None) == model.file_revision_id:
                 continue
-            name = (resource.name or "").lower()
-            ext = (resource.extension or "").lower().lstrip(".")
+            owner_type = str(getattr(side, "owning_entity_type", "") or "").lower()
+            resource_id = (getattr(side, "resource_id", None)
+                           or getattr(side, "owning_entity_id", None))
+            name = (getattr(side, "name", "") or "").lower()
+            ext = (getattr(side, "extension", "") or "").lower().lstrip(".")
+            related.append(f"{owner_type or '?'}:{name} [{rel.relationship_type_name}]")
+            if not resource_id or resource_id in seen:
+                continue
+            if owner_type and owner_type != "artifact":
+                continue
             if ext in ("json", "csv") and "table" in name:
-                artifacts.append(resource)
+                seen.add(resource_id)
+                artifacts.append(client.resources.get(resource_id))
+    if debug and not artifacts:
+        log(
+            f"debug: {vendor_name(model)}: no artifact matched the table filter; "
+            f"related resources: {related or 'none'}"
+        )
     return artifacts
 
 
@@ -194,29 +239,91 @@ def vendor_name(model) -> str:
     return Path(name).stem
 
 
+def gather_rows(artifacts):
+    """Parse a vendor's artifacts into rows, avoiding double counting.
+
+    Extraction produces both a combined tables.json and one CSV per table, and
+    a re-extracted model carries a second full set — so keep only the newest
+    artifact per filename, and prefer the JSON (falling back to the CSVs only
+    when no JSON yields rows).
+    """
+    by_name: dict = {}
+    for a in artifacts:
+        prev = by_name.get(a.name)
+        if prev is None or ((a.created or 0) and (prev.created or 0) and a.created > prev.created):
+            by_name[a.name] = a
+    arts = list(by_name.values())
+    json_arts = [a for a in arts if (a.extension or "").lower().lstrip(".") == "json"]
+    csv_arts = [a for a in arts if a not in json_arts]
+    rows = []
+    for a in json_arts:
+        rows.extend(rows_from_artifact(a.name or "", a.read_bytes()))
+    used = json_arts
+    if not rows:
+        for a in csv_arts:
+            rows.extend(rows_from_artifact(a.name or "", a.read_bytes()))
+        used = csv_arts
+    return rows, used
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     ap.add_argument("system_id", help="Istari System UUID")
-    ap.add_argument("rfi_id", help="Model UUID of the RFI document (excluded from comparison)")
-    ap.add_argument("--branch", default="main", help="System branch to read models from (default: main)")
-    ap.add_argument("--force", action="store_true",
-                    help="Re-run extraction even when table artifacts already exist")
-    ap.add_argument("-o", "--output", type=Path, default=Path("rfi_comparison.csv"),
-                    help="Local report path (default: rfi_comparison.csv)")
-    ap.add_argument("--no-upload", action="store_true",
-                    help="Skip uploading the report back to the Istari system")
-    ap.add_argument("--job-timeout", type=float, default=900.0,
-                    help="Seconds to wait for each extraction job (default: 900)")
+    ap.add_argument(
+        "rfi_id", help="Model UUID of the RFI document (excluded from comparison)"
+    )
+    ap.add_argument(
+        "--branch",
+        default="main",
+        help="System branch to read models from (default: main)",
+    )
+    ap.add_argument(
+        "--force",
+        action="store_true",
+        help="Re-run extraction even when table artifacts already exist",
+    )
+    ap.add_argument(
+        "--function",
+        default=EXTRACT_FUNCTION,
+        help=f"Extraction function name (default: {EXTRACT_FUNCTION})",
+    )
+    ap.add_argument(
+        "-o",
+        "--output",
+        type=Path,
+        default=Path("rfi_comparison.csv"),
+        help="Local report path (default: rfi_comparison.csv)",
+    )
+    ap.add_argument(
+        "--no-upload",
+        action="store_true",
+        help="Skip uploading the report back to the Istari system",
+    )
+    ap.add_argument(
+        "--job-timeout",
+        type=float,
+        default=900.0,
+        help="Seconds to wait for each extraction job (default: 900)",
+    )
     args = ap.parse_args()
 
-    client = Istari(Configuration())  # reads ISTARI_REGISTRY_URL / _AUTH_TOKEN from env
+    load_dotenv()
+    client = Istari(
+        config=Configuration(
+            digital_api_url="https://api.dev.istari.app",
+            identity_service_secret_file=".istari_credentials.json",
+            identity_service_enabled=True,
+        )
+    )
 
     models = list_response_models(client, args.system_id, args.branch, args.rfi_id)
     if not models:
         log("error: no response models found on the branch")
         return 1
-    log(f"found {len(models)} response model(s): "
-        + ", ".join(vendor_name(m) for m in models))
+    log(
+        f"found {len(models)} response model(s): "
+        + ", ".join(vendor_name(m) for m in models)
+    )
 
     # Submit extraction jobs for models that need them, then wait on all of them.
     pending = []
@@ -224,8 +331,8 @@ def main() -> int:
         if not args.force and find_table_artifacts(client, model):
             log(f"{vendor_name(model)}: reusing existing extracted-table artifacts")
             continue
-        job = client.jobs.create(resource_id=model.resource_id, function=EXTRACT_FUNCTION)
-        log(f"{vendor_name(model)}: submitted {EXTRACT_FUNCTION} job {job.id}")
+        job = client.jobs.create(resource_id=model.resource_id, function=args.function)
+        log(f"{vendor_name(model)}: submitted {args.function} job {job.id}")
         pending.append((model, job))
     for model, job in pending:
         status = job.poll(timeout=args.job_timeout)
@@ -238,16 +345,18 @@ def main() -> int:
     vendors: list[tuple[str, dict]] = []
     labels: dict[str, str] = {}
     for model in models:
-        artifacts = find_table_artifacts(client, model)
+        artifacts = find_table_artifacts(client, model, debug=True)
         if not artifacts:
-            log(f"warning: {vendor_name(model)}: no extracted-table artifacts found — skipping")
+            log(
+                f"warning: {vendor_name(model)}: no extracted-table artifacts found — skipping"
+            )
             continue
-        rows = []
-        for artifact in artifacts:
-            rows.extend(rows_from_artifact(artifact.name or "", artifact.read_bytes()))
+        rows, used = gather_rows(artifacts)
         responses, names = compile_responses(rows, vendor_name(model))
-        log(f"{vendor_name(model)}: {len(responses)} requirements from "
-            f"{len(artifacts)} artifact(s)")
+        log(
+            f"{vendor_name(model)}: {len(responses)} requirements from "
+            f"{len(used)} artifact(s): {', '.join(a.name or '?' for a in used)}"
+        )
         vendors.append((vendor_name(model), responses))
         for rid, label in names.items():
             labels.setdefault(rid, label)
@@ -259,15 +368,21 @@ def main() -> int:
     matrix = build_matrix(vendors, labels)
     with args.output.open("w", encoding="utf-8", newline="") as f:
         csv.writer(f).writerows(matrix)
-    log(f"wrote {len(vendors)} vendor rows x {len(matrix[0]) - 1} requirement columns "
-        f"-> {args.output}")
+    log(
+        f"wrote {len(vendors)} vendor rows x {len(matrix[0]) - 1} requirement columns "
+        f"-> {args.output}"
+    )
 
     if not args.no_upload:
         output = client.systems.workflows.create_output(
-            args.system_id, args.output,
+            args.system_id,
+            args.output,
             description="RFI response comparison matrix",
-            display_name=args.output.name)
-        log(f"uploaded report to system {args.system_id} as workflow output {output.id}")
+            display_name=args.output.name,
+        )
+        log(
+            f"uploaded report to system {args.system_id} as workflow output {output.id}"
+        )
 
     return 0
 
