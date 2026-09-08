@@ -1,0 +1,14 @@
+# venv (this directory doubles as the virtualenv root)
+bin/
+include/
+lib/
+pyvenv.cfg
+venv/
+
+__pycache__/
+*.pyc
+
+# generated test artifacts
+*.json
+*_concat.csv
+matrix_csv
