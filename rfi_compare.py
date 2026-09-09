@@ -7,8 +7,9 @@ Given an Istari System ID and the RFI document's model UUID, this script:
     1. lists the models tracked on the system's branch; every model other than
        the RFI itself is treated as one vendor's RFI response
     2. ensures each response model has extracted-table artifacts, submitting an
-       ``open_pdf:extract_tables`` job where they are missing (or always, with
-       --force) and waiting for the jobs to finish
+       extraction job (``@istari:extract_tables`` by default, see --function)
+       where they are missing (or always, with --force) and waiting for the
+       jobs to finish
     3. compiles each model's extracted-table artifacts into a single
        requirement-ID -> response mapping (three-column tables assumed:
        requirement ID, label, vendor response; header names may vary)
