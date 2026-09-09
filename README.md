@@ -109,3 +109,13 @@ on Ubuntu 20.04+ / Debian 11+ / RHEL 9+. Copy the result over
 The system ID must stay a parameter: the job runner passes no system/job
 metadata to functions, and a model can be tracked by multiple systems, so the
 input file alone cannot disambiguate which vendor set to compare against.
+
+## To Do
+1. Finalize logging/add error handling.
+2. Finalize auth passing.
+3. Increase support for variably formatted data, failing quickly and loudly when unable to parse.
+
+   a. Add support for additional/missing columns.
+
+   b. Add support for fuzzy-matching of column -> purpose (req ID, vendor response, supporting information, etc)
+5. Add typing to code.
