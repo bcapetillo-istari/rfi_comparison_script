@@ -1,1 +1,0 @@
-istari-digital-client>=13.0.1

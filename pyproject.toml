@@ -1,0 +1,24 @@
+[project]
+name = "rfi-comparison-script"
+version = "1.0.0"
+description = "Cross-vendor RFI response comparison for Istari systems, packaged as a cl_module function"
+authors = [{ name = "Benjamin Capetillo", email = "bcapetillo@istaridigital.com" }]
+readme = "README.md"
+requires-python = ">=3.10,<4.0"
+dependencies = [
+    "istari-digital-client (>=13.0.1,<14)",
+    "python-dotenv (>=1.0)",
+]
+
+[project.scripts]
+rfi-compare = "rfi_compare:main"
+
+[tool.poetry]
+packages = [{ include = "rfi_compare.py" }]
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.3"
+
+[build-system]
+requires = ["poetry-core>=2.0"]
+build-backend = "poetry.core.masonry.api"

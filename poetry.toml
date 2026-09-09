@@ -1,0 +1,4 @@
+# Project-local Poetry behavior: keep the virtualenv inside the repo (.venv/)
+# so tooling and editors find it without global configuration.
+[virtualenvs]
+in-project = true
