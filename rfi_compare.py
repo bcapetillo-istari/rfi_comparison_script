@@ -56,7 +56,7 @@ HEADER_HINTS = {"id", "req", "requirement", "requirement id", "req id", "req_id"
 REQ_ID_PATTERN = re.compile(r"^[A-Za-z]{0,8}[-. ]?\d+(?:[.\-]\d+)*$")
 
 ISTARI_API_URL = "https://api.dev.istari.app"
-ISTARI_CREDENTIALS_PATH = "istari_credentials.json"
+ISTARI_CREDENTIALS_PATH = ".istari_credentials.json"
 
 
 def log(msg: str) -> None:
