@@ -15,9 +15,9 @@ Given an Istari System ID and the RFI document's model UUID, this script:
        requirement ID, label, vendor response; header names may vary)
     4. correlates requirement IDs across vendors and writes a wide comparison
        matrix — one column per requirement ID, one row per vendor — as CSV,
-       and uploads the report to the registry as an ARTIFACT with 'produces'
-       lineage from each source model revision; re-runs add a new revision to
-       the existing report resource instead of duplicating it
+       uploads it as a single ARTIFACT resource (re-runs add a new revision
+       instead of duplicating), and commits that revision onto the system's
+       branch so the report is linked at the system level
 
 Vendor responses are passed through untouched: no unit conversion, no rewriting.
 Duplicate requirement IDs within one vendor are joined with ' | ' and warned
@@ -182,9 +182,8 @@ def get_branch(client: Istari, system_id: str, branch_name: str):
     )
 
 
-def list_response_models(client: Istari, system_id: str, branch_name: str, rfi_id: str):
+def list_response_models(client: Istari, branch, rfi_id: str):
     """Return the branch's MODEL resources, excluding the RFI document itself."""
-    branch = get_branch(client, system_id, branch_name)
     models, skipped = [], []
     for tracked in client.systems.branches.list_files(branch):
         if type_name(tracked.resource_type) != "MODEL":
@@ -241,48 +240,44 @@ def vendor_name(model) -> str:
     return Path(name).stem
 
 
-def upload_report(client: Istari, path: Path, source_models: list, system_id: str):
-    """Upload the report with lineage back to the vendor response models.
+def upload_report(client: Istari, path: Path, branch, system_id: str):
+    """Upload the report once and attach it at the system level.
 
-    The report is registered as an ARTIFACT resource. If a resource with the
-    same filename already exists, a new revision is added instead of creating
-    a duplicate. Each source model's current file revision is linked to the
-    report revision with the 'produces' relationship type, so the report's
-    lineage traces back to the original input files.
+    The report is registered as a single ARTIFACT resource. If a resource with
+    the same filename already exists, a new revision is added instead of
+    creating a duplicate. The new revision is then committed onto the system's
+    branch as a tracked file (replacing the previously tracked report revision,
+    if any), so the report is linked to the system itself — not to each input.
     """
     existing = next(iter(client.resources.list(name=[path.name], size=2).items), None)
     description = f"RFI response comparison matrix for system {system_id}"
     if existing:
-        revision = client.resources.revisions.create(
+        add_obj = client.resources.revisions.create(
             existing.resource_id, path, description=description
         )
-        report_id, report_revision_id = existing.resource_id, revision.id
+        report_id, report_revision_id = existing.resource_id, add_obj.id
         log(f"report exists — added revision {report_revision_id} "
             f"to resource {report_id}")
     else:
-        resource = client.resources.create(
+        add_obj = client.resources.create(
             path, "ARTIFACT", description=description, display_name=path.name
         )
-        report_id, report_revision_id = resource.resource_id, resource.file_revision_id
+        report_id, report_revision_id = add_obj.resource_id, add_obj.file_revision_id
         log(f"created report resource {report_id} (revision {report_revision_id})")
 
-    rel_type = next(
-        (t for t in client.resources.relationships.list_types()
-         if (getattr(t, "name", "") or "").lower() == "produces"),
-        None,
-    )
-    if rel_type is None:
-        log("warning: no 'produces' relationship type on this deployment — "
-            "report uploaded without lineage")
-        return report_id
-    for model in source_models:
-        client.resources.relationships.create(
-            left_revision_id=model.file_revision_id,
-            right_revision_id=report_revision_id,
-            relationship_type_id=rel_type.id,
+    # Swap the previously tracked report revision (if any) for the new one.
+    # commit(remove=...) wants objects with a revision `.id`, which
+    # TrackedResource lacks — resolve each to its ResourceRevision.
+    stale = [
+        client.resources.revisions.get(
+            tracked.resource_id, tracked.current_file_revision_id
         )
-    log(f"lineage: linked {len(source_models)} source model revision(s) "
-        f"-> report revision via 'produces'")
+        for tracked in client.systems.branches.list_files(branch, name=path.name)
+        if tracked.resource_id == report_id
+    ]
+    client.systems.branches.commit(branch, add=[add_obj], remove=stale or None)
+    log(f"committed report revision {report_revision_id} onto branch "
+        f"{branch.tag!r}" + (f" (replaced {len(stale)} stale revision(s))" if stale else ""))
     return report_id
 
 
@@ -338,8 +333,8 @@ def main() -> int:
         "-o",
         "--output",
         type=Path,
-        default=Path("rfi_comparison.csv"),
-        help="Local report path (default: rfi_comparison.csv)",
+        default=Path("rfi_response_comparison.csv"),
+        help="Local report path (default: rfi_response_comparison.csv)",
     )
     ap.add_argument(
         "--no-upload",
@@ -363,7 +358,8 @@ def main() -> int:
         )
     )
 
-    models = list_response_models(client, args.system_id, args.branch, args.rfi_id)
+    branch = get_branch(client, args.system_id, args.branch)
+    models = list_response_models(client, branch, args.rfi_id)
     if not models:
         log("error: no response models found on the branch")
         return 1
@@ -391,7 +387,6 @@ def main() -> int:
     # Compile each vendor's artifacts into one requirement -> response picture.
     vendors: list[tuple[str, dict]] = []
     labels: dict[str, str] = {}
-    contributing_models = []
     for model in models:
         artifacts = find_table_artifacts(client, model, debug=True)
         if not artifacts:
@@ -406,7 +401,6 @@ def main() -> int:
             f"{len(used)} artifact(s): {', '.join(a.name or '?' for a in used)}"
         )
         vendors.append((vendor_name(model), responses))
-        contributing_models.append(model)
         for rid, label in names.items():
             labels.setdefault(rid, label)
 
@@ -423,7 +417,7 @@ def main() -> int:
     )
 
     if not args.no_upload:
-        upload_report(client, args.output, contributing_models, args.system_id)
+        upload_report(client, args.output, branch, args.system_id)
 
     return 0
 
