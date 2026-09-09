@@ -118,4 +118,6 @@ input file alone cannot disambiguate which vendor set to compare against.
    a. Add support for additional/missing columns.
 
    b. Add support for fuzzy-matching of column -> purpose (req ID, vendor response, supporting information, etc)
+
+   c. Add clear NOT_FOUND values for not existent or corrupted data.
 5. Add typing to code.
