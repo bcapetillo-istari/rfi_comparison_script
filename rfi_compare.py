@@ -208,8 +208,9 @@ def identify_rfi(models: list, rfi_file: Path):
     return None
 
 
-def list_response_models(client: Istari, branch, rfi_id: str | None,
-                         rfi_file: Path | None):
+def list_response_models(
+    client: Istari, branch, rfi_id: str | None, rfi_file: Path | None
+):
     """Return the branch's MODEL resources, excluding the RFI document.
 
     The RFI is identified either by its UUID (--rfi-id) or by matching the
@@ -312,7 +313,7 @@ def main() -> int:
         "--rfi-file",
         type=Path,
         help="Local path of the RFI document (the job's input model file); the "
-             "matching tracked model is excluded from the comparison",
+        "matching tracked model is excluded from the comparison",
     )
     rfi_group.add_argument(
         "--rfi-id",
