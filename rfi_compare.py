@@ -14,10 +14,10 @@ Given an Istari System ID and the RFI document's model UUID, this script:
        requirement-ID -> response mapping (three-column tables assumed:
        requirement ID, label, vendor response; header names may vary)
     4. correlates requirement IDs across vendors and writes a wide comparison
-       matrix — one column per requirement ID, one row per vendor — as CSV,
-       uploads it as a single ARTIFACT resource (re-runs add a new revision
-       instead of duplicating), and commits that revision onto the system's
-       branch so the report is linked at the system level
+       matrix — one column per requirement ID, one row per vendor — as CSV
+       and uploads it as a single ARTIFACT resource (re-runs add a new
+       revision instead of duplicating); committing the revision onto a
+       branch is left to the UI
 
 Vendor responses are passed through untouched: no unit conversion, no rewriting.
 Duplicate requirement IDs within one vendor are joined with ' | ' and warned
@@ -240,44 +240,29 @@ def vendor_name(model) -> str:
     return Path(name).stem
 
 
-def upload_report(client: Istari, path: Path, branch, system_id: str):
-    """Upload the report once and attach it at the system level.
+def upload_report(client: Istari, path: Path, system_id: str):
+    """Upload the report as a single ARTIFACT resource.
 
-    The report is registered as a single ARTIFACT resource. If a resource with
-    the same filename already exists, a new revision is added instead of
-    creating a duplicate. The new revision is then committed onto the system's
-    branch as a tracked file (replacing the previously tracked report revision,
-    if any), so the report is linked to the system itself — not to each input.
+    If a resource with the same filename already exists, a new revision is
+    added instead of creating a duplicate. The revision is not committed onto
+    any branch — attach it to the system in the UI.
     """
     existing = next(iter(client.resources.list(name=[path.name], size=2).items), None)
     description = f"RFI response comparison matrix for system {system_id}"
     if existing:
-        add_obj = client.resources.revisions.create(
+        revision = client.resources.revisions.create(
             existing.resource_id, path, description=description
         )
-        report_id, report_revision_id = existing.resource_id, add_obj.id
+        report_id, report_revision_id = existing.resource_id, revision.id
         log(f"report exists — added revision {report_revision_id} "
             f"to resource {report_id}")
     else:
-        add_obj = client.resources.create(
+        resource = client.resources.create(
             path, "ARTIFACT", description=description, display_name=path.name
         )
-        report_id, report_revision_id = add_obj.resource_id, add_obj.file_revision_id
+        report_id, report_revision_id = resource.resource_id, resource.file_revision_id
         log(f"created report resource {report_id} (revision {report_revision_id})")
-
-    # Swap the previously tracked report revision (if any) for the new one.
-    # commit(remove=...) wants objects with a revision `.id`, which
-    # TrackedResource lacks — resolve each to its ResourceRevision.
-    stale = [
-        client.resources.revisions.get(
-            tracked.resource_id, tracked.current_file_revision_id
-        )
-        for tracked in client.systems.branches.list_files(branch, name=path.name)
-        if tracked.resource_id == report_id
-    ]
-    client.systems.branches.commit(branch, add=[add_obj], remove=stale or None)
-    log(f"committed report revision {report_revision_id} onto branch "
-        f"{branch.tag!r}" + (f" (replaced {len(stale)} stale revision(s))" if stale else ""))
+    log(f"uploaded — commit revision {report_revision_id} to a branch in the UI")
     return report_id
 
 
@@ -417,7 +402,7 @@ def main() -> int:
     )
 
     if not args.no_upload:
-        upload_report(client, args.output, branch, args.system_id)
+        upload_report(client, args.output, args.system_id)
 
     return 0
 
