@@ -55,6 +55,9 @@ HEADER_HINTS = {"id", "req", "requirement", "requirement id", "req id", "req_id"
 # 'KPP 7 (2 of 2)') doesn't match, so those rows are still skipped.
 REQ_ID_PATTERN = re.compile(r"^[A-Za-z]{0,8}[-. ]?\d+(?:[.\-]\d+)*$")
 
+ISTARI_API_URL = "https://api.dev.istari.app"
+ISTARI_CREDENTIALS_PATH = "istari_credentials.json"
+
 
 def log(msg: str) -> None:
     print(msg, file=sys.stderr)
@@ -321,8 +324,8 @@ def main() -> int:
     )
     ap.add_argument(
         "--branch",
-        default="main",
-        help="System branch to read models from (default: main)",
+        default="baseline",
+        help="System branch to read models from (default: baseline)",
     )
     ap.add_argument(
         "--force",
@@ -352,8 +355,8 @@ def main() -> int:
     load_dotenv()
     client = Istari(
         config=Configuration(
-            digital_api_url="https://api.dev.istari.app",
-            identity_service_secret_file=".istari_credentials.json",
+            digital_api_url=ISTARI_API_URL,
+            identity_service_secret_file=ISTARI_CREDENTIALS_PATH,
             identity_service_enabled=True,
         )
     )
