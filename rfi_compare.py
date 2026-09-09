@@ -239,37 +239,33 @@ def list_response_models(
 
 
 def find_table_artifacts(client: Istari, model, debug: bool = False) -> list:
-    """Extracted-table artifacts related to the model's current file revision.
+    """Extracted-table artifacts produced from the model's current file revision.
 
-    Relationship sides are revision DTOs carrying the owning entity, not a
-    resource_id: an extraction output has owning_entity_type 'artifact' and
-    owning_entity_id pointing at the artifact resource.
+    Extraction jobs record a 'produces' relationship with the model's file
+    revision on the left and each output artifact's revision on the right;
+    the right side is a revision DTO whose owning_entity_id is the artifact.
     """
     artifacts, related, seen = [], [], set()
-    for rel in client.resources.relationships.list(model.file_revision_id):
-        for side in (rel.left_revision, rel.right_revision):
-            if side is None:
-                continue
-            if getattr(side, "file_revision_id", None) == model.file_revision_id:
-                continue
-            owner_type = str(getattr(side, "owning_entity_type", "") or "").lower()
-            resource_id = getattr(side, "resource_id", None) or getattr(
-                side, "owning_entity_id", None
-            )
-            name = (getattr(side, "name", "") or "").lower()
-            ext = (getattr(side, "extension", "") or "").lower().lstrip(".")
-            related.append(f"{owner_type or '?'}:{name} [{rel.relationship_type_name}]")
-            if not resource_id or resource_id in seen:
-                continue
-            if owner_type and owner_type != "artifact":
-                continue
-            if ext in ("json", "csv") and "table" in name:
-                seen.add(resource_id)
-                artifacts.append(client.resources.get(resource_id))
+    for rel in client.resources.relationships.list(
+        model.file_revision_id,
+        left_revision_id=[model.file_revision_id],
+        owning_entity_type=["artifact"],
+    ):
+        out = rel.right_revision
+        name = (out.name or "").lower()
+        ext = (out.extension or "").lower().lstrip(".")
+        related.append(name)
+        if (
+            ext in ("json", "csv")
+            and "table" in name
+            and out.owning_entity_id not in seen
+        ):
+            seen.add(out.owning_entity_id)
+            artifacts.append(client.resources.get(out.owning_entity_id))
     if debug and not artifacts:
         log(
             f"debug: {vendor_name(model)}: no artifact matched the table filter; "
-            f"related resources: {related or 'none'}"
+            f"related artifacts: {related or 'none'}"
         )
     return artifacts
 
