@@ -37,6 +37,7 @@ import argparse
 import csv
 import io
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -47,6 +48,11 @@ from istari_digital_client.sdk import Istari
 EXTRACT_FUNCTION = "@istari:extract_tables"
 
 HEADER_HINTS = {"id", "req", "requirement", "requirement id", "req id", "req_id"}
+
+# An ID-shaped cell: numeric-dotted ('1.10', '7.8') or a short alphanumeric
+# code carrying digits ('KSA-1', 'KPP.3', 'A-2.1'). Prose ('Loiter Time',
+# 'KPP 7 (2 of 2)') doesn't match, so those rows are still skipped.
+REQ_ID_PATTERN = re.compile(r"^[A-Za-z]{0,8}[-. ]?\d+(?:[.\-]\d+)*$")
 
 
 def log(msg: str) -> None:
@@ -59,22 +65,24 @@ def log(msg: str) -> None:
 
 
 def looks_like_header(row: list) -> bool:
+    """True for rows that carry no requirement (headers, titles, blanks)."""
     if not row:
         return False
     first = str(row[0]).strip().lower()
-    if first in HEADER_HINTS:
+    if not first or first in HEADER_HINTS:
         return True
-    return not first.replace(".", "").isdigit() or not first
+    return not REQ_ID_PATTERN.match(first)
 
 
 def req_id_key(req_id: str):
-    """Numeric-aware key so '1.11' sorts after '1.2'."""
+    """Numeric-aware key: '1.11' sorts after '1.2', 'KSA-10' after 'KSA-2',
+    and alphanumeric IDs sort after purely numeric ones."""
     parts = []
-    for p in str(req_id).strip().split("."):
-        try:
-            parts.append((0, int(p)))
-        except ValueError:
-            parts.append((1, p))
+    for token in re.findall(r"\d+|\D+", str(req_id).strip()):
+        if token.isdigit():
+            parts.append((0, int(token), ""))
+        else:
+            parts.append((1, 0, token.lower()))
     return tuple(parts)
 
 

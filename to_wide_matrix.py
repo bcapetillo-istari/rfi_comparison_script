@@ -26,10 +26,14 @@ Only the Python standard library is used.
 
 import argparse
 import csv
+import re
 import sys
 from pathlib import Path
 
 HEADER_HINTS = {"id", "req", "requirement", "requirement id", "req id", "req_id"}
+
+# ID-shaped: numeric-dotted ('1.10') or short alphanumeric code ('KSA-1').
+REQ_ID_PATTERN = re.compile(r"^[A-Za-z]{0,8}[-. ]?\d+(?:[.\-]\d+)*$")
 
 
 def detect_delimiter(path: Path) -> str:
@@ -41,22 +45,23 @@ def detect_delimiter(path: Path) -> str:
 
 
 def looks_like_header(row: list[str]) -> bool:
+    """True for rows that carry no requirement ID (headers, titles, blanks)."""
     if not row:
         return False
     first = row[0].strip().lower()
-    if first in HEADER_HINTS:
+    if not first or first in HEADER_HINTS:
         return True
-    return not first.replace(".", "").isdigit() or not first
+    return not REQ_ID_PATTERN.match(first)
 
 
 def id_sort_key(req_id: str):
-    """Numeric-aware key so '1.11' sorts after '1.2' instead of between '1.1' and '1.2'."""
+    """Numeric-aware key: '1.11' after '1.2', 'KSA-10' after 'KSA-2'."""
     parts = []
-    for p in req_id.strip().split("."):
-        try:
-            parts.append((0, int(p)))
-        except ValueError:
-            parts.append((1, p))
+    for token in re.findall(r"\d+|\D+", req_id.strip()):
+        if token.isdigit():
+            parts.append((0, int(token), ""))
+        else:
+            parts.append((1, 0, token.lower()))
     return tuple(parts)
 
 

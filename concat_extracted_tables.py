@@ -22,6 +22,7 @@ Only the Python standard library is used.
 import argparse
 import csv
 import json
+import re
 import sys
 from collections import Counter
 from pathlib import Path
@@ -29,6 +30,9 @@ from pathlib import Path
 DELIM = ","
 
 HEADER_HINTS = {"id", "req", "requirement", "requirement id", "req id", "req_id"}
+
+# ID-shaped: numeric-dotted ('1.10') or short alphanumeric code ('KSA-1').
+REQ_ID_PATTERN = re.compile(r"^[A-Za-z]{0,8}[-. ]?\d+(?:[.\-]\d+)*$")
 
 def extract_rows(path: Path):
     """Return a list of rows from a csv file"""
@@ -42,25 +46,30 @@ def extract_rows(path: Path):
 
 
 def req_id_key(row):
-    """Numeric sort key for a requirement ID like '1.11' (so 1.2 < 1.11)."""
-    try:
-        return [int(part) for part in row[0].split(".")]
-    except (ValueError, IndexError):
-        return []
+    """Numeric-aware sort key: '1.2' < '1.11', 'KSA-2' < 'KSA-10'."""
+    rid = row[0].strip() if row else ""
+    parts = []
+    for token in re.findall(r"\d+|\D+", rid):
+        if token.isdigit():
+            parts.append((0, int(token), ""))
+        else:
+            parts.append((1, 0, token.lower()))
+    return parts
 
 def looks_like_header(row: list[str]) -> bool:
+    """True for rows that carry no requirement ID (headers, titles, blanks)."""
     if not row:
         return False
     first = row[0].strip().lower()
-    if first in HEADER_HINTS:
+    if not first or first in HEADER_HINTS:
         return True
-    return not first.replace(".", "").isdigit() or not first
+    return not REQ_ID_PATTERN.match(first)
 
 
 def sort_table(rows, path: Path):
-    """Sort data rows by requirement ID, keeping a non-numeric header row first."""
+    """Sort data rows by requirement ID, keeping a non-ID header row first."""
     header, data = [], rows
-    if rows and not req_id_key(rows[0]):
+    if rows and looks_like_header(rows[0]):
         header, data = rows[:1], rows[1:]
 
     dupes = [rid for rid, n in Counter(r[0] for r in data if r).items() if n > 1]
