@@ -2,10 +2,16 @@
 """
 rfi_compare.py — Build a cross-vendor RFI response comparison from an Istari system.
 
-Given an Istari System ID and the RFI document's model UUID, this script:
+Built to run as a cl_module function: the job's input model IS the RFI
+document, and the report is left in the working directory so it becomes an
+output of the job (nothing is uploaded or committed at the system level).
 
-    1. lists the models tracked on the system's branch; every model other than
-       the RFI itself is treated as one vendor's RFI response
+Given an Istari System ID and the RFI document (--rfi-file, the job's local
+input file, or --rfi-id, its model UUID), this script:
+
+    1. lists the models tracked on the system's branch; the RFI is identified
+       (by exact content match, falling back to filename) and excluded, and
+       every other model is treated as one vendor's RFI response
     2. ensures each response model has extracted-table artifacts, submitting an
        extraction job (``@istari:extract_tables`` by default, see --function)
        where they are missing (or always, with --force) and waiting for the
@@ -14,23 +20,18 @@ Given an Istari System ID and the RFI document's model UUID, this script:
        requirement-ID -> response mapping (three-column tables assumed:
        requirement ID, label, vendor response; header names may vary)
     4. correlates requirement IDs across vendors and writes a wide comparison
-       matrix — one column per requirement ID, one row per vendor — as CSV,
-       uploads it as a single ARTIFACT resource (re-runs add a new revision
-       instead of duplicating), and commits that revision onto the system's
-       branch so the report is linked at the system level
+       matrix — one column per requirement ID, one row per vendor — as CSV in
+       the working directory (default rfi_response_comparison.csv), which the
+       job machinery uploads as a job output
 
 Vendor responses are passed through untouched: no unit conversion, no rewriting.
 Duplicate requirement IDs within one vendor are joined with ' | ' and warned
 about (this catches numbering typos like a second '1.1' meant as '1.10').
 
-Authentication comes from the environment:
-    ISTARI_REGISTRY_URL, ISTARI_REGISTRY_AUTH_TOKEN
-
 Usage:
-    python3 rfi_compare.py SYSTEM_ID RFI_UUID
-    python3 rfi_compare.py SYSTEM_ID RFI_UUID -o report.csv --branch main
-    python3 rfi_compare.py SYSTEM_ID RFI_UUID --force          # re-extract all
-    python3 rfi_compare.py SYSTEM_ID RFI_UUID --no-upload      # local CSV only
+    rfi_compare SYSTEM_ID --rfi-file "$input_model"     # cl_module job
+    rfi_compare SYSTEM_ID --rfi-id RFI_UUID             # manual run
+    rfi_compare SYSTEM_ID --rfi-file f.pdf --force      # re-extract all
 """
 
 import argparse
@@ -190,22 +191,47 @@ def get_branch(client: Istari, system_id: str, branch_name: str):
     )
 
 
-def list_response_models(client: Istari, branch, rfi_id: str):
-    """Return the branch's MODEL resources, excluding the RFI document itself."""
-    models, skipped = [], []
-    for tracked in client.systems.branches.list_files(branch):
-        if type_name(tracked.resource_type) != "MODEL":
-            continue
-        if tracked.resource_id == rfi_id:
-            skipped.append(tracked)
-            continue
-        models.append(tracked)
-    if not skipped:
+def identify_rfi(models: list, rfi_file: Path):
+    """Find which tracked model is the RFI by matching the local input file.
+
+    Exact content match first (size prefilter, so normally only one download),
+    then filename match as a fallback for re-uploaded/re-encoded documents.
+    """
+    data = rfi_file.read_bytes()
+    for model in models:
+        if model.size == len(data) and model.read_bytes() == data:
+            return model
+    for model in models:
+        if (model.name or "") == rfi_file.name:
+            log(f"note: RFI matched by filename only (content differs): {model.name}")
+            return model
+    return None
+
+
+def list_response_models(client: Istari, branch, rfi_id: str | None,
+                         rfi_file: Path | None):
+    """Return the branch's MODEL resources, excluding the RFI document.
+
+    The RFI is identified either by its UUID (--rfi-id) or by matching the
+    job's local input file (--rfi-file) against the tracked models.
+    """
+    models = [
+        tracked
+        for tracked in client.systems.branches.list_files(branch)
+        if type_name(tracked.resource_type) == "MODEL"
+    ]
+    if rfi_file is not None:
+        rfi = identify_rfi(models, rfi_file)
+    else:
+        rfi = next((m for m in models if m.resource_id == rfi_id), None)
+    if rfi is None:
         log(
-            f"note: RFI {rfi_id} was not among the branch's models — "
+            "warning: could not identify the RFI among the branch's models — "
             f"treating all {len(models)} models as responses"
         )
-    return models
+        return models
+    log(f"RFI identified: {rfi.name} ({rfi.resource_id}) — excluded from comparison")
+    return [m for m in models if m.resource_id != rfi.resource_id]
 
 
 def find_table_artifacts(client: Istari, model, debug: bool = False) -> list:
@@ -223,8 +249,9 @@ def find_table_artifacts(client: Istari, model, debug: bool = False) -> list:
             if getattr(side, "file_revision_id", None) == model.file_revision_id:
                 continue
             owner_type = str(getattr(side, "owning_entity_type", "") or "").lower()
-            resource_id = (getattr(side, "resource_id", None)
-                           or getattr(side, "owning_entity_id", None))
+            resource_id = getattr(side, "resource_id", None) or getattr(
+                side, "owning_entity_id", None
+            )
             name = (getattr(side, "name", "") or "").lower()
             ext = (getattr(side, "extension", "") or "").lower().lstrip(".")
             related.append(f"{owner_type or '?'}:{name} [{rel.relationship_type_name}]")
@@ -248,47 +275,6 @@ def vendor_name(model) -> str:
     return Path(name).stem
 
 
-def upload_report(client: Istari, path: Path, branch, system_id: str):
-    """Upload the report once and attach it at the system level.
-
-    The report is registered as a single ARTIFACT resource. If a resource with
-    the same filename already exists, a new revision is added instead of
-    creating a duplicate. The new revision is then committed onto the system's
-    branch as a tracked file (replacing the previously tracked report revision,
-    if any), so the report is linked to the system itself — not to each input.
-    """
-    existing = next(iter(client.resources.list(name=[path.name], size=2).items), None)
-    description = f"RFI response comparison matrix for system {system_id}"
-    if existing:
-        add_obj = client.resources.revisions.create(
-            existing.resource_id, path, description=description
-        )
-        report_id, report_revision_id = existing.resource_id, add_obj.id
-        log(f"report exists — added revision {report_revision_id} "
-            f"to resource {report_id}")
-    else:
-        add_obj = client.resources.create(
-            path, "ARTIFACT", description=description, display_name=path.name
-        )
-        report_id, report_revision_id = add_obj.resource_id, add_obj.file_revision_id
-        log(f"created report resource {report_id} (revision {report_revision_id})")
-
-    # Swap the previously tracked report revision (if any) for the new one.
-    # commit(remove=...) wants objects with a revision `.id`, which
-    # TrackedResource lacks — resolve each to its ResourceRevision.
-    stale = [
-        client.resources.revisions.get(
-            tracked.resource_id, tracked.current_file_revision_id
-        )
-        for tracked in client.systems.branches.list_files(branch, name=path.name)
-        if tracked.resource_id == report_id
-    ]
-    client.systems.branches.commit(branch, add=[add_obj], remove=stale or None)
-    log(f"committed report revision {report_revision_id} onto branch "
-        f"{branch.tag!r}" + (f" (replaced {len(stale)} stale revision(s))" if stale else ""))
-    return report_id
-
-
 def gather_rows(artifacts):
     """Parse a vendor's artifacts into rows, avoiding double counting.
 
@@ -300,7 +286,9 @@ def gather_rows(artifacts):
     by_name: dict = {}
     for a in artifacts:
         prev = by_name.get(a.name)
-        if prev is None or ((a.created or 0) and (prev.created or 0) and a.created > prev.created):
+        if prev is None or (
+            (a.created or 0) and (prev.created or 0) and a.created > prev.created
+        ):
             by_name[a.name] = a
     arts = list(by_name.values())
     json_arts = [a for a in arts if (a.extension or "").lower().lstrip(".") == "json"]
@@ -319,8 +307,16 @@ def gather_rows(artifacts):
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     ap.add_argument("system_id", help="Istari System UUID")
-    ap.add_argument(
-        "rfi_id", help="Model UUID of the RFI document (excluded from comparison)"
+    rfi_group = ap.add_mutually_exclusive_group(required=True)
+    rfi_group.add_argument(
+        "--rfi-file",
+        type=Path,
+        help="Local path of the RFI document (the job's input model file); the "
+             "matching tracked model is excluded from the comparison",
+    )
+    rfi_group.add_argument(
+        "--rfi-id",
+        help="Model UUID of the RFI document (excluded from the comparison)",
     )
     ap.add_argument(
         "--branch",
@@ -345,11 +341,6 @@ def main() -> int:
         help="Local report path (default: rfi_response_comparison.csv)",
     )
     ap.add_argument(
-        "--no-upload",
-        action="store_true",
-        help="Skip uploading the report back to the Istari system",
-    )
-    ap.add_argument(
         "--job-timeout",
         type=float,
         default=900.0,
@@ -366,8 +357,12 @@ def main() -> int:
         )
     )
 
+    if args.rfi_file is not None and not args.rfi_file.is_file():
+        log(f"error: RFI file not found: {args.rfi_file}")
+        return 1
+
     branch = get_branch(client, args.system_id, args.branch)
-    models = list_response_models(client, branch, args.rfi_id)
+    models = list_response_models(client, branch, args.rfi_id, args.rfi_file)
     if not models:
         log("error: no response models found on the branch")
         return 1
@@ -423,9 +418,6 @@ def main() -> int:
         f"wrote {len(vendors)} vendor rows x {len(matrix[0]) - 1} requirement columns "
         f"-> {args.output}"
     )
-
-    if not args.no_upload:
-        upload_report(client, args.output, branch, args.system_id)
 
     return 0
 
