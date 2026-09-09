@@ -28,7 +28,8 @@ docker run --rm --platform "$PLATFORM" \
         apt-get -o Acquire::Check-Valid-Until=false update -qq
         apt-get install -y -qq --no-install-recommends binutils > /dev/null
         pip install --quiet --upgrade pip
-        pip install --quiet -r requirements.txt pyinstaller
+        # dependencies come from pyproject.toml (poetry-core build backend)
+        pip install --quiet . pyinstaller
         pyinstaller --onefile --name rfi_compare \
             --distpath '$OUT' --workpath /tmp/pyi-build --specpath /tmp \
             rfi_compare.py

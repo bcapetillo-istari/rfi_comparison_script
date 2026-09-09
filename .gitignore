@@ -1,23 +1,18 @@
-# venv (this directory doubles as the virtualenv root)
-bin/
-include/
-lib/
-pyvenv.cfg
-venv/
-
-__pycache__/
-*.pyc
-
 # secrets — never commit
 .env
 .istari_credentials.json
 
-# generated test artifacts
-*.json
-*_concat.csv
-matrix_csv
-rfi_comparison.csv
+# environments
+.venv/
+
+# python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# generated outputs
 rfi_response_comparison.csv
+*.log
 
 # build outputs
 dist/
