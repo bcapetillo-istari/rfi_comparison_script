@@ -248,6 +248,23 @@ def vendor_name(model) -> str:
     return Path(name).stem
 
 
+def write_xlsx(matrix: list[list[str]], path: Path):
+    """Write the matrix as .xlsx with every cell explicitly text-formatted,
+    so Excel cannot coerce IDs like '1.10' into the number 1.1 on open
+    (which it does to plain CSV regardless of quoting)."""
+    from openpyxl import Workbook
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "RFI comparison"
+    for row in matrix:
+        ws.append(row)
+    for excel_row in ws.iter_rows():
+        for cell in excel_row:
+            cell.number_format = "@"
+    wb.save(path)
+
+
 def upload_report(client: Istari, path: Path, branch, system_id: str):
     """Upload the report once and attach it at the system level.
 
@@ -350,6 +367,12 @@ def main() -> int:
         help="Skip uploading the report back to the Istari system",
     )
     ap.add_argument(
+        "--xlsx",
+        action="store_true",
+        help="Also write an .xlsx copy with text-formatted cells, so Excel "
+             "does not coerce IDs like '1.10' into 1.1 when opening",
+    )
+    ap.add_argument(
         "--job-timeout",
         type=float,
         default=900.0,
@@ -423,6 +446,10 @@ def main() -> int:
         f"wrote {len(vendors)} vendor rows x {len(matrix[0]) - 1} requirement columns "
         f"-> {args.output}"
     )
+    if args.xlsx:
+        xlsx_path = args.output.with_suffix(".xlsx")
+        write_xlsx(matrix, xlsx_path)
+        log(f"wrote Excel-safe copy (IDs as text) -> {xlsx_path}")
 
     if not args.no_upload:
         upload_report(client, args.output, branch, args.system_id)

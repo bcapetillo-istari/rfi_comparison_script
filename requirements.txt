@@ -1,1 +1,2 @@
 istari-digital-client>=13.0.1
+openpyxl>=3.1
