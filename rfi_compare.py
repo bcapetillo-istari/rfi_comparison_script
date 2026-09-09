@@ -14,7 +14,9 @@ Given an Istari System ID and the RFI document's model UUID, this script:
        requirement ID, label, vendor response; header names may vary)
     4. correlates requirement IDs across vendors and writes a wide comparison
        matrix — one column per requirement ID, one row per vendor — as CSV,
-       and uploads the report back to the system as a workflow output
+       and uploads the report to the registry as an ARTIFACT with 'produces'
+       lineage from each source model revision; re-runs add a new revision to
+       the existing report resource instead of duplicating it
 
 Vendor responses are passed through untouched: no unit conversion, no rewriting.
 Duplicate requirement IDs within one vendor are joined with ' | ' and warned
@@ -35,7 +37,6 @@ import csv
 import io
 import json
 import sys
-from collections import Counter
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -101,7 +102,7 @@ def iter_tables(data):
         yield data  # single table (list of rows)
 
 
-def rows_from_artifact(name: str, raw: bytes):
+def rows_from_artifact(raw: bytes):
     """Parse an artifact's bytes into rows, accepting JSON or CSV content."""
     text = raw.decode("utf-8-sig", errors="replace")
     stripped = text.lstrip()
@@ -239,6 +240,51 @@ def vendor_name(model) -> str:
     return Path(name).stem
 
 
+def upload_report(client: Istari, path: Path, source_models: list, system_id: str):
+    """Upload the report with lineage back to the vendor response models.
+
+    The report is registered as an ARTIFACT resource. If a resource with the
+    same filename already exists, a new revision is added instead of creating
+    a duplicate. Each source model's current file revision is linked to the
+    report revision with the 'produces' relationship type, so the report's
+    lineage traces back to the original input files.
+    """
+    existing = next(iter(client.resources.list(name=[path.name], size=2).items), None)
+    description = f"RFI response comparison matrix for system {system_id}"
+    if existing:
+        revision = client.resources.revisions.create(
+            existing.resource_id, path, description=description
+        )
+        report_id, report_revision_id = existing.resource_id, revision.id
+        log(f"report exists — added revision {report_revision_id} "
+            f"to resource {report_id}")
+    else:
+        resource = client.resources.create(
+            path, "ARTIFACT", description=description, display_name=path.name
+        )
+        report_id, report_revision_id = resource.resource_id, resource.file_revision_id
+        log(f"created report resource {report_id} (revision {report_revision_id})")
+
+    rel_type = next(
+        (t for t in client.resources.relationships.list_types()
+         if (getattr(t, "name", "") or "").lower() == "produces"),
+        None,
+    )
+    if rel_type is None:
+        log("warning: no 'produces' relationship type on this deployment — "
+            "report uploaded without lineage")
+        return report_id
+    for model in source_models:
+        client.resources.relationships.create(
+            left_revision_id=model.file_revision_id,
+            right_revision_id=report_revision_id,
+            relationship_type_id=rel_type.id,
+        )
+    log(f"lineage: linked {len(source_models)} source model revision(s) "
+        f"-> report revision via 'produces'")
+    return report_id
+
+
 def gather_rows(artifacts):
     """Parse a vendor's artifacts into rows, avoiding double counting.
 
@@ -257,11 +303,11 @@ def gather_rows(artifacts):
     csv_arts = [a for a in arts if a not in json_arts]
     rows = []
     for a in json_arts:
-        rows.extend(rows_from_artifact(a.name or "", a.read_bytes()))
+        rows.extend(rows_from_artifact(a.read_bytes()))
     used = json_arts
     if not rows:
         for a in csv_arts:
-            rows.extend(rows_from_artifact(a.name or "", a.read_bytes()))
+            rows.extend(rows_from_artifact(a.read_bytes()))
         used = csv_arts
     return rows, used
 
@@ -344,6 +390,7 @@ def main() -> int:
     # Compile each vendor's artifacts into one requirement -> response picture.
     vendors: list[tuple[str, dict]] = []
     labels: dict[str, str] = {}
+    contributing_models = []
     for model in models:
         artifacts = find_table_artifacts(client, model, debug=True)
         if not artifacts:
@@ -358,6 +405,7 @@ def main() -> int:
             f"{len(used)} artifact(s): {', '.join(a.name or '?' for a in used)}"
         )
         vendors.append((vendor_name(model), responses))
+        contributing_models.append(model)
         for rid, label in names.items():
             labels.setdefault(rid, label)
 
@@ -374,15 +422,7 @@ def main() -> int:
     )
 
     if not args.no_upload:
-        output = client.systems.workflows.create_output(
-            args.system_id,
-            args.output,
-            description="RFI response comparison matrix",
-            display_name=args.output.name,
-        )
-        log(
-            f"uploaded report to system {args.system_id} as workflow output {output.id}"
-        )
+        upload_report(client, args.output, contributing_models, args.system_id)
 
     return 0
 
