@@ -1,6 +1,6 @@
 {
   "CompareRfiResponses": {
-    "executable": "$RFI_MODULE_DIR/scripts/run_rfi_compare.sh",
+    "executable": "$RFI_MODULE_DIR/scripts/rfi_compare",
     "arguments": [
       "\"$system_id\"",
       "--rfi-file",
@@ -11,7 +11,7 @@
       "RFI_MODULE_DIR": "/opt/local/istari_agent/istari_modules/rfi_comparison_module",
       "EXTRACT_FUNCTION": "@istari:extract_tables",
       "ISTARI_API_URL": "https://api.dev.istari.app",
-      "ISTARI_CREDENTIALS_PATH": ".istari_credentials.json",
+      "ISTARI_CREDENTIALS_PATH": "/opt/local/istari_agent/istari_modules/rfi_comparison_module/.istari_credentials.json",
       "DEFAULT_JOB_TIMEOUT_S": "3600"
     }
   }
