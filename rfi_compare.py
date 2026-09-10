@@ -44,6 +44,7 @@ import io
 import json
 import re
 import sys
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -88,7 +89,7 @@ NOT_FOUND_MSG = "Not Found - Manual review required"
 
 
 def log(msg: str) -> None:
-    print(msg, file=sys.stderr)
+    print(f"{time.strftime('%H:%M:%S')} {msg}", file=sys.stderr)
 
 
 # Typographic dash variants (hyphen, en/em dash, minus) unified to '-'.
@@ -392,7 +393,7 @@ def vendor_name(model) -> str:
     return Path(name).stem
 
 
-def gather_tables(artifacts):
+def gather_tables(artifacts, vendor: str = "?"):
     """Parse a vendor's artifacts into tables, avoiding double counting.
 
     Extraction produces both a combined tables.json and one CSV per table, and
@@ -410,15 +411,23 @@ def gather_tables(artifacts):
     arts = list(by_name.values())
     json_arts = [a for a in arts if (a.extension or "").lower().lstrip(".") == "json"]
     csv_arts = [a for a in arts if a not in json_arts]
-    tables = []
-    for a in json_arts:
-        tables.extend(tables_from_artifact(a.read_bytes()))
-    used = json_arts
-    if not any(tables):
+
+    def parse_all(subset):
         tables = []
-        for a in csv_arts:
-            tables.extend(tables_from_artifact(a.read_bytes()))
-        used = csv_arts
+        for a in subset:
+            found = list(tables_from_artifact(a.read_bytes()))
+            log(f"{vendor}: {a.name}: {sum(1 for t in found if t)} table(s)")
+            tables.extend(found)
+        return tables
+
+    tables, used = parse_all(json_arts), json_arts
+    if not any(tables):
+        if json_arts:
+            log(
+                f"warning: {vendor}: no JSON artifact yielded tables — "
+                f"falling back to {len(csv_arts)} CSV artifact(s)"
+            )
+        tables, used = parse_all(csv_arts), csv_arts
     return tables, used
 
 
@@ -510,6 +519,12 @@ def main() -> int:
             return 1
         if status != "Completed":
             log(f"error: extraction job for {vendor_name(model)} ended '{status}'")
+            try:  # best-effort: surface the agent's failure reason in the log
+                detail = client.jobs.get(job.id).status
+                if detail is not None and detail.message:
+                    log(f"error: job {job.id} last status message: {detail.message}")
+            except Exception:
+                pass
             return 1
         log(f"{vendor_name(model)}: extraction {status}")
 
@@ -523,7 +538,7 @@ def main() -> int:
                 f"warning: {vendor_name(model)}: no extracted-table artifacts found — skipping"
             )
             continue
-        tables, used = gather_tables(artifacts)
+        tables, used = gather_tables(artifacts, vendor_name(model))
         responses, names = compile_tables(tables, vendor_name(model))
         log(
             f"{vendor_name(model)}: {len(responses)} requirements from "
