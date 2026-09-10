@@ -52,6 +52,11 @@ from istari_digital_client.sdk import Istari
 
 EXTRACT_FUNCTION = "@istari:extract_tables"
 
+# Per-extraction-job wait. Jobs are all submitted before any polling starts,
+# so this only needs to cover one worst-case extraction plus queue jitter,
+# not N of them (--job-timeout overrides).
+DEFAULT_JOB_TIMEOUT = 3600.0
+
 # Header cells that name a requirement-ID column (matched by equality) and
 # ones that name a response column (matched by substring, so 'Vendor Response'
 # and 'Compliance Statement' both hit).
@@ -456,8 +461,8 @@ def main() -> int:
     ap.add_argument(
         "--job-timeout",
         type=float,
-        default=900.0,
-        help="Seconds to wait for each extraction job (default: 900)",
+        default=DEFAULT_JOB_TIMEOUT,
+        help=f"Seconds to wait for each extraction job (default: {DEFAULT_JOB_TIMEOUT:g})",
     )
     args = ap.parse_args()
 
@@ -494,7 +499,15 @@ def main() -> int:
         log(f"{vendor_name(model)}: submitted {args.function} job {job.id}")
         pending.append((model, job))
     for model, job in pending:
-        status = job.poll(timeout=args.job_timeout)
+        try:
+            status = job.poll(timeout=args.job_timeout)
+        except TimeoutError:
+            log(
+                f"error: extraction job {job.id} for {vendor_name(model)} still "
+                f"running after {args.job_timeout:g}s — giving up (raise "
+                f"--job-timeout if extractions legitimately take longer)"
+            )
+            return 1
         if status != "Completed":
             log(f"error: extraction job for {vendor_name(model)} ended '{status}'")
             return 1
@@ -536,4 +549,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except Exception as e:
+        log(f"error: {e.__class__.__name__}: {e}")
+        raise SystemExit(1)
