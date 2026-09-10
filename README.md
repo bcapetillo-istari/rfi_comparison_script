@@ -118,13 +118,5 @@ metadata to functions, and a model can be tracked by multiple systems, so the
 input file alone cannot disambiguate which vendor set to compare against.
 
 ## To Do
-1. Finalize logging/add error handling.
-2. Finalize auth passing.
-3. Increase support for variably formatted data, failing quickly and loudly when unable to parse.
 
-   a. Add support for additional/missing columns.
-
-   b. Add support for fuzzy-matching of column -> purpose (req ID, vendor response, supporting information, etc)
-
-   c. Add clear NOT_FOUND values for not existent or corrupted data.
 5. Add typing to code.
