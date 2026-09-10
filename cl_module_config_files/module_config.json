@@ -1,0 +1,14 @@
+{
+  "CompareRfiResponses": {
+    "executable": "$RFI_MODULE_DIR/scripts/run_rfi_compare.sh",
+    "arguments": [
+      "\"$system_id\"",
+      "--rfi-file",
+      "\"$input_model\""
+    ],
+    "hidden_parameters": [],
+    "environment": {
+      "RFI_MODULE_DIR": "/opt/local/istari_agent/istari_modules/rfi_comparison_module"
+    }
+  }
+}

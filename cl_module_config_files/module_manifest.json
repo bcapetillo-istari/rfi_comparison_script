@@ -1,0 +1,75 @@
+{
+  "module_name": "@istari_utils:rfi_comparison",
+  "module_version": "1.1.0",
+  "module_display_name": "RFI Response Comparison",
+  "tool": "rfi_compare",
+  "tool_versions": [
+    "1.0"
+  ],
+  "tool_display_name": "RFI Compare",
+  "authors": [
+    {
+      "name": "Benjamin Capetillo",
+      "email": "bcapetillo@istaridigital.com"
+    }
+  ],
+  "functions": {
+    "@istari_utils:compare_rfi_responses": [
+      {
+        "entrypoint": "cl_module",
+        "run_command": "{entrypoint} CompareRfiResponses --input-file {input_file} --output-file {output_file} --temp-dir {temp_dir} --config-path {config_path}",
+        "function_schema": {
+          "inputs": {
+            "input_model": {
+              "type": "user_model",
+              "validation_types": [
+                "@extension:txt",
+                "@extension:pdf",
+                "@extension:docx",
+                "@extension:xlsx"
+              ]
+            },
+            "system_id": {
+              "type": "parameter",
+              "validation_types": [
+                "@mime_type:plain/text"
+              ],
+              "display_name": "System ID (UUID of the system holding the RFI and responses)"
+            }
+          },
+          "outputs": [
+            {
+              "name": "stdout",
+              "type": "file",
+              "required": true
+            },
+            {
+              "name": "stderr",
+              "type": "file",
+              "required": true
+            },
+            {
+              "name": "working_directory",
+              "type": "directory",
+              "required": true
+            }
+          ]
+        },
+        "operating_systems": [
+          "Ubuntu 24.04"
+        ],
+        "tool_versions": [
+          "1.0"
+        ]
+      }
+    ]
+  },
+  "module_type": "function",
+  "module_checksum": "hash",
+  "internal": false,
+  "additional_configuration_required": false,
+  "operating_systems": [
+    "Ubuntu 24.04"
+  ],
+  "agent_version": ">9.0.0"
+}
