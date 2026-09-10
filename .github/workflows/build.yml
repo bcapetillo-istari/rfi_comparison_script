@@ -1,0 +1,92 @@
+name: Build executables
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            task: build_nix
+          - os: windows-latest
+            platform: windows
+            task: build_win
+          - os: macos-latest
+            platform: macos
+            task: build_nix
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Qt's shared libraries link against these; PyInstaller's dependency
+      # analysis fails without them on a headless runner.
+      - name: Install Qt system libraries
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libgl1 libxkbcommon0 libxcb-cursor0
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Build executable
+        run: uv run poe ${{ matrix.task }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: model_diff-${{ matrix.platform }}
+          path: dist/
+          if-no-files-found: error
+
+  # Combine the three platform builds into a single "dist" artifact with
+  # macos/, windows/, and linux/ subdirectories.
+  assemble-dist:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: staging
+          pattern: model_diff-*
+
+      - name: Arrange platform subdirectories
+        run: |
+          mkdir -p dist
+          for platform in linux windows macos; do
+            mv "staging/model_diff-${platform}" "dist/${platform}"
+          done
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+      # Zip preserves the executable bit, which a raw asset upload would lose.
+      - name: Zip per-platform builds
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          for platform in linux windows macos; do
+            (cd dist && zip -r "model_diff-${platform}.zip" "${platform}")
+          done
+
+      - name: Create GitHub Release with binaries
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            dist/model_diff-*.zip \
+            --repo "${{ github.repository }}" \
+            --title "${{ github.ref_name }}" \
+            --generate-notes
