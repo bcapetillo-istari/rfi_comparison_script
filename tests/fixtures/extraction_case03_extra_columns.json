@@ -1,0 +1,131 @@
+{
+  "document": "Cirrus_Foundry_CF9_Merganser_RFI_Response.pdf",
+  "extractor": "generic-grid/1.0 (geometry-only, zero-config)",
+  "geometry_source": "module-docling",
+  "n_tables": 3,
+  "tables": [
+    {
+      "index": 1,
+      "page": 3,
+      "n_cols": 4,
+      "n_rows": 6,
+      "csv": "table_01_p3.csv",
+      "rows": [
+        [
+          "Req ID",
+          "Requirement",
+          "Vendor Response",
+          "T/O Met"
+        ],
+        [
+          "1.1",
+          "Range",
+          "1,750 km from L/R to collection area.",
+          "Objective"
+        ],
+        [
+          "1.2",
+          "Loiter Time",
+          "24 hr on station excluding ingress/egress.",
+          "Objective"
+        ],
+        [
+          "1.3",
+          "Cruise Altitude",
+          "Ceiling 26,000 ft MSL; ISR cruise 14,000-20,000 ft.",
+          "T=O"
+        ],
+        [
+          "1.4",
+          "Climb Rate",
+          "1,300 ft/min at MGW, sea level.",
+          "T=O"
+        ],
+        [
+          "1.5",
+          "Max Speed",
+          "140 KTAS dash; 80 KTAS loiter.",
+          "T=O"
+        ]
+      ]
+    },
+    {
+      "index": 2,
+      "page": 4,
+      "n_cols": 4,
+      "n_rows": 5,
+      "csv": "table_02_p4.csv",
+      "rows": [
+        [
+          "Req ID",
+          "Requirement",
+          "Vendor Response",
+          "Reference"
+        ],
+        [
+          "2.1",
+          "Communication",
+          "Secure BLOS 50 Mbps Ku with FMV + metadata; Link-16 integrated.",
+          "Slide 12, Annex B"
+        ],
+        [
+          "2.2",
+          "Integration",
+          "Integrates with aircraft, sensors, and secure networks.",
+          "Slide 12"
+        ],
+        [
+          "4.1",
+          "Command and Control",
+          "Secure BLOS C2 plus autonomous mission execution.",
+          "Slide 14"
+        ],
+        [
+          "4.2",
+          "Integration",
+          "Integrates with flight controls, sensors, secure networks.",
+          "Slide 14"
+        ]
+      ]
+    },
+    {
+      "index": 3,
+      "page": 6,
+      "n_cols": 4,
+      "n_rows": 5,
+      "csv": "table_03_p6.csv",
+      "rows": [
+        [
+          "Req ID",
+          "Requirement",
+          "Threshold Response",
+          "Objective Response"
+        ],
+        [
+          "7.4",
+          "MTI Target Tracking",
+          "N/A (threshold none)",
+          "Single-target MTI track with auto-reacquire."
+        ],
+        [
+          "7.5",
+          "MTI Track Capacity",
+          "N/A (threshold none)",
+          "Up to 8 simultaneous tracks."
+        ],
+        [
+          "7.6",
+          "Laser Range Finder",
+          "N/A (threshold none)",
+          "LRF 8 km, +/-3 m."
+        ],
+        [
+          "7.7",
+          "Laser Target Indicator",
+          "N/A (threshold none)",
+          "STANAG 3733 compatible indicator."
+        ]
+      ]
+    }
+  ]
+}

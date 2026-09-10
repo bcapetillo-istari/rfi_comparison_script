@@ -54,8 +54,8 @@ if not INPUTS:
     "path", INPUTS, ids=[str(p.relative_to(FIXTURES_DIR)) for p in INPUTS]
 )
 def test_fixture_compiles(path):
-    rows = list(rc.rows_from_artifact(path.read_bytes()))
-    responses, labels = rc.compile_responses(rows, vendor=path.stem)
+    tables = list(rc.tables_from_artifact(path.read_bytes()))
+    responses, labels = rc.compile_tables(tables, vendor=path.stem)
 
     expected_path = path.with_name(path.name + ".expected.json")
     if expected_path.exists():

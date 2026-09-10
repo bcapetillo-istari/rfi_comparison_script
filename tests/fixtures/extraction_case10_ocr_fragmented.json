@@ -1,0 +1,96 @@
+{
+  "document": "Junco_Aeroworks_JA8_Kestrelhawk_RFI_Response_scanned.pdf",
+  "extractor": "generic-grid/1.0 (geometry-only, zero-config)",
+  "geometry_source": "module-docling",
+  "n_tables": 2,
+  "tables": [
+    {
+      "index": 1,
+      "page": 2,
+      "n_cols": 9,
+      "n_rows": 5,
+      "csv": "table_01_p2.csv",
+      "rows": [
+        [
+          "Req",
+          "ID",
+          "Requirement",
+          "Vendor",
+          "Response",
+          "",
+          "",
+          "",
+          ""
+        ],
+        [
+          "a7",
+          "",
+          "Range",
+          "1,650 km",
+          "from L/R location to",
+          "collection area",
+          "(exceeds",
+          "1,500 km",
+          "objective)."
+        ],
+        [
+          "1:2",
+          "",
+          "Loiter Ti",
+          "me 22 hr",
+          "on station at",
+          "10,000 ft MSL",
+          "excluding",
+          "ingress/",
+          "egress."
+        ],
+        [
+          "13",
+          "",
+          "Cruise",
+          "Altitude",
+          "Operational ceiling",
+          "24,000 ft",
+          "MSL;",
+          "typical",
+          "cruise."
+        ],
+        [
+          "1.4",
+          "",
+          "Climb",
+          "Rate",
+          "1,150 ft/min at",
+          "max gross",
+          "weight,",
+          "sea",
+          "level."
+        ]
+      ]
+    },
+    {
+      "index": 2,
+      "page": 3,
+      "n_cols": 3,
+      "n_rows": 3,
+      "csv": "table_02_p3.csv",
+      "rows": [
+        [
+          "Req ID",
+          "Requirement",
+          "Vendor Response"
+        ],
+        [
+          "6.1",
+          "Image Type",
+          "Multi-spectral HD EO/IR (objective). GSD 15 cm at 10,000 ft AGL nadir."
+        ],
+        [
+          "6.2",
+          "Storage",
+          "2 TB removable solid-state store; full-mission retention. (T=O)"
+        ]
+      ]
+    }
+  ]
+}

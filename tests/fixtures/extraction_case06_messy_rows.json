@@ -1,0 +1,115 @@
+{
+  "document": "Foxfire_Robotics_FR2_Harrier_RFI_Response.pdf",
+  "extractor": "generic-grid/1.0 (geometry-only, zero-config)",
+  "geometry_source": "module-docling",
+  "n_tables": 3,
+  "tables": [
+    {
+      "index": 1,
+      "page": 3,
+      "n_cols": 3,
+      "n_rows": 7,
+      "csv": "table_01_p3.csv",
+      "rows": [
+        [
+          "KPP 1 -",
+          "Aircraft (1",
+          "of 2)"
+        ],
+        [
+          "Req ID",
+          "Requirement",
+          "Vendor Response"
+        ],
+        [
+          "1.1",
+          "Range",
+          "1,400 km from L/R to collection area (approaches 1,500 km objective)."
+        ],
+        [
+          "1.2",
+          "Loiter Time",
+          "20 hr on station at 9,000 ft MSL (meets objective)."
+        ],
+        [
+          "1.6",
+          "Operational Environment",
+          "Rain to 22 mm/hr; winds 28 kt sustained; -30C to"
+        ],
+        [
+          "1.7",
+          "Operational Attributes",
+          "Two-person crew; runway independent. Setup to first"
+        ],
+        [
+          "",
+          "",
+          "launch: 50 min. Meets T=O."
+        ]
+      ]
+    },
+    {
+      "index": 2,
+      "page": 4,
+      "n_cols": 3,
+      "n_rows": 5,
+      "csv": "table_02_p4.csv",
+      "rows": [
+        [
+          "Req ID",
+          "Requirement",
+          "Vendor Response"
+        ],
+        [
+          "1.12",
+          "Mission Planning",
+          "Automated route planning with dynamic re-tasking."
+        ],
+        [
+          "1.12",
+          "On-board Processing",
+          "Edge compute: multi-INT correlation; ATR in test."
+        ],
+        [
+          "1.13",
+          "Ground Control Station",
+          ""
+        ],
+        [
+          "10.2",
+          "Integration",
+          "CONOPS. Integrates with aircraft, sensor, navigation, and EUD. (T=O)"
+        ]
+      ]
+    },
+    {
+      "index": 3,
+      "page": 6,
+      "n_cols": 3,
+      "n_rows": 4,
+      "csv": "table_03_p6.csv",
+      "rows": [
+        [
+          "Station",
+          "",
+          ""
+        ],
+        [
+          "Req ID",
+          "Requirement",
+          "Vendor Response"
+        ],
+        [
+          "8.1",
+          "Waveform",
+          "RF detection 200 MHz - 8 GHz; characterization of common tactical emitters."
+        ],
+        [
+          "8.2",
+          "Integration",
+          "Integrates with aircraft, C3, navigation, and EUD. (T=O)"
+        ]
+      ]
+    }
+  ]
+}

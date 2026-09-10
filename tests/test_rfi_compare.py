@@ -14,29 +14,35 @@ import rfi_compare as rc
 # Row/ID handling
 # ----------------------------------------------------------------------------
 
-class TestLooksLikeHeader:
-    @pytest.mark.parametrize("row", [
-        ["Req ID", "Requirement", "Vendor Response"],
-        ["ID", "Code", "Remarks"],
-        ["Loiter Time", "x", "y"],
-        ["KPP 7 (2 of 2)", "", ""],
-        ["", "", ""],
+class TestCleanRequirementId:
+    @pytest.mark.parametrize("raw,cleaned", [
+        ("1.1", "1.1"),
+        (" 1.5 ", "1.5"),            # whitespace
+        ("1.3:", "1.3"),             # trailing punctuation
+        ("(1.1)", "1.1"),            # wrapping punctuation
+        ("ksa-3", "KSA-3"),          # case
+        ("KSA–2", "KSA-2"),     # en dash -> hyphen
+        ("1.04", "1.04"),            # designation kept verbatim
+        ("KPP 1.1", "KPP 1.1"),      # prefix kept verbatim
+        ("KPP 6 -", "KPP 6 -"),      # trailing dash NOT stripped (truncated title)
     ])
-    def test_non_data_rows_are_headers(self, row):
-        assert rc.looks_like_header(row)
+    def test_normalization(self, raw, cleaned):
+        assert rc.clean_requirement_id(raw) == cleaned
 
-    @pytest.mark.parametrize("row", [
-        ["1.1", "Range", "410 km"],
-        ["1.10", "Navigation", "GPS"],
-        ["7.8", "", ""],
-        ["KSA-1", "Airworthiness", "Meets USAF criteria"],
-        ["KSA-10", "", ""],
+
+class TestIsRequirementId:
+    @pytest.mark.parametrize("cell", [
+        "1.1", "1.10", "7.8", "KSA-1", "KSA-10", "ksa-3", "1.3:", "KSA–2",
     ])
-    def test_id_rows_are_data(self, row):
-        assert not rc.looks_like_header(row)
+    def test_id_shaped(self, cell):
+        assert rc.is_requirement_id(cell)
 
-    def test_empty_row(self):
-        assert not rc.looks_like_header([])
+    @pytest.mark.parametrize("cell", [
+        "Req ID", "ID", "Loiter Time", "KPP 7 (2 of 2)", "", "KPP 6 -",
+        "10 units", "Table 3: Compliance Matrix",
+    ])
+    def test_not_id_shaped(self, cell):
+        assert not rc.is_requirement_id(cell)
 
 
 class TestReqIdKey:
@@ -75,49 +81,56 @@ class TestIterTables:
         assert list(rc.iter_tables(data)) == []
 
 
-class TestRowsFromArtifact:
+class TestTablesFromArtifact:
     def test_json_bytes(self):
         raw = json.dumps({"tables": [{"rows": TABLE}]}).encode()
-        assert list(rc.rows_from_artifact(raw)) == TABLE
+        assert list(rc.tables_from_artifact(raw)) == [TABLE]
 
     def test_csv_bytes_with_bom_and_quotes(self):
         raw = '﻿ID,Code,Remarks\r\n"1.1","C","410 km, demonstrated."\r\n'.encode("utf-8")
-        rows = list(rc.rows_from_artifact(raw))
-        assert rows == [["ID", "Code", "Remarks"], ["1.1", "C", "410 km, demonstrated."]]
+        tables = list(rc.tables_from_artifact(raw))
+        assert tables == [[["ID", "Code", "Remarks"], ["1.1", "C", "410 km, demonstrated."]]]
 
     def test_malformed_json_falls_back_to_csv(self):
-        rows = list(rc.rows_from_artifact(b"[not json,but has,a comma"))
-        assert rows == [["[not json", "but has", "a comma"]]
+        tables = list(rc.tables_from_artifact(b"[not json,but has,a comma"))
+        assert tables == [[["[not json", "but has", "a comma"]]]
 
 
 # ----------------------------------------------------------------------------
 # Compile and matrix
 # ----------------------------------------------------------------------------
 
-class TestCompileResponses:
+class TestCompileTables:
     def test_basic_three_column(self):
-        responses, labels = rc.compile_responses(
-            [["ID", "Code", "Remarks"], ["1.1", "C", "Range answer."]], "v")
+        responses, labels = rc.compile_tables(
+            [[["ID", "Code", "Remarks"], ["1.1", "C", "Range answer."]]], "v")
         assert responses == {"1.1": "Range answer."}
         assert labels == {"1.1": "C"}
 
     def test_alphanumeric_ids_kept_and_prose_skipped(self):
-        rows = [["KSA-1", "C", "Airworthiness answer."],
-                ["KPP 7 (2 of 2)", "", ""],
-                ["", "", ""]]
-        responses, _ = rc.compile_responses(rows, "v")
+        table = [["KSA-1", "C", "Airworthiness answer."],
+                 ["KPP 7 (2 of 2)", "", ""],
+                 ["", "", ""]]
+        responses, _ = rc.compile_tables([table], "v")
         assert responses == {"KSA-1": "Airworthiness answer."}
 
     def test_duplicates_joined_with_pipe(self, capsys):
-        rows = [["1.12", "C", "Mission Planning."], ["1.12", "PC", "On-board Processing."]]
-        responses, labels = rc.compile_responses(rows, "v")
+        table = [["1.12", "C", "Mission Planning."], ["1.12", "PC", "On-board Processing."]]
+        responses, labels = rc.compile_tables([table], "v")
         assert responses["1.12"] == "Mission Planning. | On-board Processing."
         assert labels["1.12"] == "C"  # first occurrence wins
         assert "duplicate requirement ID '1.12'" in capsys.readouterr().err
 
+    def test_duplicates_joined_across_tables(self, capsys):
+        tables = [[["1.12", "C", "Mission Planning."]],
+                  [["1.12", "PC", "On-board Processing."]]]
+        responses, _ = rc.compile_tables(tables, "v")
+        assert responses["1.12"] == "Mission Planning. | On-board Processing."
+        assert "duplicate requirement ID '1.12'" in capsys.readouterr().err
+
     def test_wide_rows_joined_short_rows_padded(self):
-        responses, _ = rc.compile_responses(
-            [["1.1", "C", "part a", "part b"], ["1.2", "PC"]], "v")
+        responses, _ = rc.compile_tables(
+            [[["1.1", "C", "part a", "part b"], ["1.2", "PC"]]], "v")
         assert responses["1.1"] == "part a, part b"
         assert responses["1.2"] == ""
 
@@ -130,8 +143,8 @@ class TestBuildMatrix:
         matrix = rc.build_matrix(vendors, labels)
         assert matrix[0] == ["vendor", "1.1", "1.10", "KSA-1"]
         assert matrix[1] == ["", "Range", "", "Airworthiness"]
-        assert matrix[2] == ["alpha", "a1", "a10", ""]
-        assert matrix[3] == ["bravo", "b1", "", "bk"]
+        assert matrix[2] == ["alpha", "a1", "a10", rc.NOT_FOUND_MSG]
+        assert matrix[3] == ["bravo", "b1", rc.NOT_FOUND_MSG, "bk"]
 
 
 # ----------------------------------------------------------------------------
@@ -172,26 +185,26 @@ def fake_client(branches=(), files=()):
 # gather_rows
 # ----------------------------------------------------------------------------
 
-class TestGatherRows:
+class TestGatherTables:
     def test_prefers_json_over_redundant_csvs(self):
         js = fake_artifact("tables.json", json.dumps({"tables": [{"rows": TABLE}]}).encode())
         cs = fake_artifact("table_01_p2.csv", b"1.1,C,dup of same data\n")
-        rows, used = rc.gather_rows([cs, js])
-        assert rows == TABLE
+        tables, used = rc.gather_tables([cs, js])
+        assert tables == [TABLE]
         assert [a.name for a in used] == ["tables.json"]
 
     def test_falls_back_to_csv_when_json_empty(self):
         js = fake_artifact("tables.json", json.dumps({"n_tables": 0, "tables": []}).encode())
         cs = fake_artifact("table_01_p2.csv", b"1.1,C,resp\n")
-        rows, used = rc.gather_rows([js, cs])
-        assert rows == [["1.1", "C", "resp"]]
+        tables, used = rc.gather_tables([js, cs])
+        assert tables == [[["1.1", "C", "resp"]]]
         assert [a.name for a in used] == ["table_01_p2.csv"]
 
     def test_newest_artifact_per_filename_wins(self):
         old = fake_artifact("tables.json", json.dumps({"tables": [{"rows": [["1.1", "C", "old"]]}]}).encode(), created=1)
         new = fake_artifact("tables.json", json.dumps({"tables": [{"rows": [["1.1", "C", "new"]]}]}).encode(), created=2)
-        rows, _ = rc.gather_rows([old, new])
-        assert rows == [["1.1", "C", "new"]]
+        tables, _ = rc.gather_tables([old, new])
+        assert tables == [[["1.1", "C", "new"]]]
 
 
 # ----------------------------------------------------------------------------

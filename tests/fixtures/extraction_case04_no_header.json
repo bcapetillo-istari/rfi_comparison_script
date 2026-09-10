@@ -1,0 +1,76 @@
+{
+  "document": "Delmarva_UAS_DV3_Osprey_RFI_Response.pdf",
+  "extractor": "generic-grid/1.0 (geometry-only, zero-config)",
+  "geometry_source": "module-docling",
+  "n_tables": 2,
+  "tables": [
+    {
+      "index": 1,
+      "page": 3,
+      "n_cols": 3,
+      "n_rows": 5,
+      "csv": "table_01_p3.csv",
+      "rows": [
+        [
+          "1.1",
+          "Range",
+          "450 km from L/R location to collection area."
+        ],
+        [
+          "1.2",
+          "Loiter Time",
+          "7 hr in collection area."
+        ],
+        [
+          "1.3",
+          "Cruise Altitude",
+          "Ceiling 14,000 ft MSL."
+        ],
+        [
+          "1.4",
+          "Climb Rate",
+          "700 ft/min at max gross weight."
+        ],
+        [
+          "1.5",
+          "Max Speed",
+          "95 KTAS max; 58 KTAS loiter."
+        ]
+      ]
+    },
+    {
+      "index": 2,
+      "page": 4,
+      "n_cols": 3,
+      "n_rows": 5,
+      "csv": "table_02_p4.csv",
+      "rows": [
+        [
+          "KPP 6 -",
+          "Camera",
+          "Sensor | KPP 7 - FMV Sensor"
+        ],
+        [
+          "6.1",
+          "Image Type",
+          "EO/IR (threshold). GSD 35 cm at 5,000 ft AGL."
+        ],
+        [
+          "6.2",
+          "Storage",
+          "512 GB onboard; full-mission retention."
+        ],
+        [
+          "7.1",
+          "Field of View",
+          "Gimbaled 360-degree coverage."
+        ],
+        [
+          "7.2",
+          "Video Type",
+          "EO/IR 1080p. GSD 30 cm at 5,000 ft AGL."
+        ]
+      ]
+    }
+  ]
+}

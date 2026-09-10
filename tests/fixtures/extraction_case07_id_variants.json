@@ -1,0 +1,86 @@
+{
+  "document": "Graywing_Defense_GW7_Petrel_RFI_Response.pdf",
+  "extractor": "generic-grid/1.0 (geometry-only, zero-config)",
+  "geometry_source": "module-docling",
+  "n_tables": 2,
+  "tables": [
+    {
+      "index": 1,
+      "page": 3,
+      "n_cols": 3,
+      "n_rows": 7,
+      "csv": "table_01_p3.csv",
+      "rows": [
+        [
+          "Req ID",
+          "Requirement",
+          "Vendor Response"
+        ],
+        [
+          "KPP 1.1",
+          "Range",
+          "760 km from L/R to collection area."
+        ],
+        [
+          "KPP 1.2",
+          "Loiter Time",
+          "11 hr in collection area."
+        ],
+        [
+          "1.3:",
+          "Cruise Altitude",
+          "Ceiling 17,500 ft MSL."
+        ],
+        [
+          "1.04",
+          "Climb Rate",
+          "850 ft/min at MGW."
+        ],
+        [
+          "1.5 ",
+          "Max Speed",
+          "102 KTAS dash; 62 KTAS loiter."
+        ],
+        [
+          "1.10",
+          "Navigation",
+          "GPS + INS; terrain-aided Alt PNT in development."
+        ]
+      ]
+    },
+    {
+      "index": 2,
+      "page": 4,
+      "n_cols": 3,
+      "n_rows": 5,
+      "csv": "table_02_p4.csv",
+      "rows": [
+        [
+          "Req ID",
+          "Requirement",
+          "Vendor Response"
+        ],
+        [
+          "KSA 1",
+          "Airworthiness",
+          "Group 2/3 airworthiness package in work."
+        ],
+        [
+          "KSA\u20132",
+          "IFF",
+          "IFF Mode 3 integrated on all airframes."
+        ],
+        [
+          "ksa-3",
+          "Security",
+          "Secure network integration via customer crypto."
+        ],
+        [
+          "KSA-4",
+          "Manufacturing",
+          "25 aircraft/month within 6 months of contract."
+        ]
+      ]
+    }
+  ]
+}

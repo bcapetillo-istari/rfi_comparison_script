@@ -1,0 +1,133 @@
+{
+  "document": "Hollis_Aerospace_HA4_Gyrfalcon_RFI_Response.pdf",
+  "extractor": "generic-grid/1.0 (geometry-only, zero-config)",
+  "geometry_source": "module-docling",
+  "n_tables": 4,
+  "tables": [
+    {
+      "index": 1,
+      "page": 2,
+      "n_cols": 2,
+      "n_rows": 5,
+      "csv": "table_01_p2.csv",
+      "rows": [
+        [
+          "Field",
+          "Value"
+        ],
+        [
+          "Company",
+          "Hollis Aerospace Corp."
+        ],
+        [
+          "CAGE Code",
+          "7XYZ1"
+        ],
+        [
+          "Business Size",
+          "Small Business (NAICS 336411)"
+        ],
+        [
+          "POC",
+          "J. Hollis, jhollis@hollisaero.example, (555) 013-2214"
+        ]
+      ]
+    },
+    {
+      "index": 2,
+      "page": 6,
+      "n_cols": 3,
+      "n_rows": 4,
+      "csv": "table_02_p6.csv",
+      "rows": [
+        [
+          "Quantity",
+          "Unit ROM Cost",
+          "Program ROM"
+        ],
+        [
+          "10 units",
+          "$410K",
+          "$4.1M"
+        ],
+        [
+          "50 units",
+          "$340K",
+          "$17.0M"
+        ],
+        [
+          "100 units",
+          "$295K",
+          "$29.5M"
+        ]
+      ]
+    },
+    {
+      "index": 3,
+      "page": 8,
+      "n_cols": 3,
+      "n_rows": 5,
+      "csv": "table_03_p8.csv",
+      "rows": [
+        [
+          "Req ID",
+          "Requirement",
+          "Vendor Response"
+        ],
+        [
+          "1.1",
+          "Range",
+          "1,200 km from L/R to collection area."
+        ],
+        [
+          "1.2",
+          "Loiter Time",
+          "18 hr in collection area."
+        ],
+        [
+          "1.9",
+          "Communications",
+          "Secure BLOS Ku with FMV and metadata; Link-16 roadmap 2027."
+        ],
+        [
+          "1.10",
+          "Navigation",
+          "GPS (SAASM-ready), tactical INS, vision-aided Alt PNT."
+        ]
+      ]
+    },
+    {
+      "index": 4,
+      "page": 12,
+      "n_cols": 4,
+      "n_rows": 4,
+      "csv": "table_04_p12.csv",
+      "rows": [
+        [
+          "Milestone",
+          "TRL",
+          "MRL",
+          "Date"
+        ],
+        [
+          "Prototype flight",
+          "6",
+          "5",
+          "2025-08"
+        ],
+        [
+          "LRIP readiness",
+          "7",
+          "7",
+          "2026-11"
+        ],
+        [
+          "Full rate",
+          "8",
+          "8",
+          "2027-09"
+        ]
+      ]
+    }
+  ]
+}

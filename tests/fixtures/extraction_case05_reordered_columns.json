@@ -1,0 +1,86 @@
+{
+  "document": "Ellsworth_Aero_EA5_Kite_RFI_Response.pdf",
+  "extractor": "generic-grid/1.0 (geometry-only, zero-config)",
+  "geometry_source": "module-docling",
+  "n_tables": 2,
+  "tables": [
+    {
+      "index": 1,
+      "page": 3,
+      "n_cols": 3,
+      "n_rows": 7,
+      "csv": "table_01_p3.csv",
+      "rows": [
+        [
+          "Requirement",
+          "Req ID",
+          "Vendor Response"
+        ],
+        [
+          "Range",
+          "1.1",
+          "900 km from L/R to collection area."
+        ],
+        [
+          "Loiter Time",
+          "1.2",
+          "14 hr in collection area."
+        ],
+        [
+          "Cruise Altitude",
+          "1.3",
+          "Ceiling 19,000 ft MSL."
+        ],
+        [
+          "Climb Rate",
+          "1.4",
+          "1,000 ft/min at MGW, sea level."
+        ],
+        [
+          "Max Speed",
+          "1.5",
+          "110 KTAS dash; 68 KTAS loiter."
+        ],
+        [
+          "Operational Environment",
+          "1.6",
+          "Rain to 20 mm/hr; -30C to +47C."
+        ]
+      ]
+    },
+    {
+      "index": 2,
+      "page": 5,
+      "n_cols": 3,
+      "n_rows": 5,
+      "csv": "table_02_p5.csv",
+      "rows": [
+        [
+          "Requirement",
+          "Req ID",
+          "Vendor Response"
+        ],
+        [
+          "Waveform",
+          "8.1",
+          "SIGINT detection 100 MHz - 12 GHz; DF +/-2.5 deg."
+        ],
+        [
+          "Integration",
+          "8.2",
+          "Integrates with aircraft, C3, navigation, and EUD."
+        ],
+        [
+          "Ground Control Station",
+          "10.1",
+          "Minimal footprint; automated STANAG 4609 reporting."
+        ],
+        [
+          "Integration",
+          "10.2",
+          "Integrates with aircraft, sensors, C3, navigation, EUD."
+        ]
+      ]
+    }
+  ]
+}

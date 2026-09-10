@@ -1,0 +1,107 @@
+{
+  "document": "Boreal_Dynamics_BD22_Skua_RFI_Response.pdf",
+  "extractor": "generic-grid/1.0 (geometry-only, zero-config)",
+  "geometry_source": "module-docling",
+  "n_tables": 3,
+  "tables": [
+    {
+      "index": 1,
+      "page": 2,
+      "n_cols": 2,
+      "n_rows": 8,
+      "csv": "table_01_p2.csv",
+      "rows": [
+        [
+          "Req ID",
+          "Boreal Dynamics Response"
+        ],
+        [
+          "1.1",
+          "640 km from L/R location to collection area (exceeds 200 km threshold)."
+        ],
+        [
+          "1.2",
+          "9 hr in collection area."
+        ],
+        [
+          "1.3",
+          "Ceiling 16,000 ft MSL; typical cruise 6,000-12,000 ft MSL."
+        ],
+        [
+          "1.4",
+          "780 ft/min at max gross weight."
+        ],
+        [
+          "1.5",
+          "98 KTAS max; 60 KTAS loiter."
+        ],
+        [
+          "1.6",
+          "Rain to 15 mm/hr, winds 22 kt sustained; -25C to +45C."
+        ],
+        [
+          "1.7",
+          "Two-person crew; vehicle-transportable; rail launch, net recovery. 60 min setup."
+        ]
+      ]
+    },
+    {
+      "index": 2,
+      "page": 3,
+      "n_cols": 2,
+      "n_rows": 6,
+      "csv": "table_02_p3.csv",
+      "rows": [
+        [
+          "Req ID",
+          "Boreal Dynamics Response"
+        ],
+        [
+          "6.1",
+          "EO/IR HD (threshold met). GSD 30 cm at 6,000 ft AGL."
+        ],
+        [
+          "6.2",
+          "1 TB onboard storage; full-mission retention."
+        ],
+        [
+          "6.3",
+          "Post-mission and in-mission download to EUD."
+        ],
+        [
+          "7.1",
+          "Gimbaled sensor, 360-degree coverage (threshold)."
+        ],
+        [
+          "7.3",
+          "40 Mbps (below 50 Mbps T=O; roadmap to 50 Mbps Q3 2027)."
+        ]
+      ]
+    },
+    {
+      "index": 3,
+      "page": 4,
+      "n_cols": 2,
+      "n_rows": 4,
+      "csv": "table_03_p4.csv",
+      "rows": [
+        [
+          "KSA-1",
+          "Group 2/3 airworthiness self-certification with prior CoA history."
+        ],
+        [
+          "KSA-2",
+          "IFF Mode 3 option (adds 200 g)."
+        ],
+        [
+          "KSA-3",
+          "EUD export to secure networks via approved workflow."
+        ],
+        [
+          "KSA-4",
+          "60 aircraft/month within 5 months; first units 75 days ARO."
+        ]
+      ]
+    }
+  ]
+}
