@@ -42,6 +42,7 @@ import argparse
 import csv
 import io
 import json
+import os
 import re
 import sys
 import time
@@ -50,13 +51,6 @@ from pathlib import Path
 from dotenv import load_dotenv
 from istari_digital_client import Configuration
 from istari_digital_client.sdk import Istari
-
-EXTRACT_FUNCTION = "@istari:extract_tables"
-
-# Per-extraction-job wait. Jobs are all submitted before any polling starts,
-# so this only needs to cover one worst-case extraction plus queue jitter,
-# not N of them (--job-timeout overrides).
-DEFAULT_JOB_TIMEOUT = 3600.0
 
 # Header cells that name a requirement-ID column (matched by equality) and
 # ones that name a response column (matched by substring, so 'Vendor Response'
@@ -81,9 +75,6 @@ HEADER_RESPONSE_HINTS = ("response", "answer", "compliance", "statement", "remar
 # code carrying digits ('KSA-1', 'KPP.3', 'A-2.1'). Prose ('Loiter Time',
 # 'KPP 7 (2 of 2)') doesn't match, so those rows are still skipped.
 REQ_ID_PATTERN = re.compile(r"^[A-Za-z]{0,8}[-. ]?\d+(?:[.\-]\d+)*$")
-
-ISTARI_API_URL = "https://api.dev.istari.app"
-ISTARI_CREDENTIALS_PATH = ".istari_credentials.json"
 
 NOT_FOUND_MSG = "Not Found - Manual review required"
 
@@ -432,6 +423,16 @@ def gather_tables(artifacts, vendor: str = "?"):
 
 
 def main() -> int:
+
+    # Load config
+    load_dotenv()
+    EXTRACT_FUNCTION = os.environ.get("EXTRACT_FUNCTION", "@istari:extract_tables")
+    ISTARI_API_URL = os.environ.get("ISTARI_API_URL", "https://api.dev.istari.app")
+    ISTARI_CREDENTIALS_PATH = os.environ.get(
+        "ISTARI_CREDENTIALS_PATH", ".istari_credentials.json"
+    )
+    DEFAULT_JOB_TIMEOUT_S = float(os.environ.get("DEFAULT_JOB_TIMEOUT_S", 3600))
+
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     ap.add_argument("system_id", help="Istari System UUID")
     rfi_group = ap.add_mutually_exclusive_group(required=True)
@@ -470,12 +471,11 @@ def main() -> int:
     ap.add_argument(
         "--job-timeout",
         type=float,
-        default=DEFAULT_JOB_TIMEOUT,
-        help=f"Seconds to wait for each extraction job (default: {DEFAULT_JOB_TIMEOUT:g})",
+        default=DEFAULT_JOB_TIMEOUT_S,
+        help=f"Seconds to wait for each extraction job (default: {DEFAULT_JOB_TIMEOUT_S:g})",
     )
     args = ap.parse_args()
 
-    load_dotenv()
     client = Istari(
         config=Configuration(
             digital_api_url=ISTARI_API_URL,
