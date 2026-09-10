@@ -17,11 +17,18 @@ becomes an output of the job.
    for completion. Existing artifacts are reused; `--force` re-extracts.
 3. **Compile** — parses each vendor's artifacts (the combined `tables.json`
    is preferred; per-table CSVs are a fallback; the newest artifact per
-   filename wins) into a `{requirement ID -> response}` mapping. Rows are read
-   as `(ID, label, response)`; requirement IDs may be numeric-dotted (`1.10`,
-   `7.8`) or alphanumeric codes (`KSA-1`). Vendor response text is passed
-   through untouched. Duplicate IDs within a vendor are joined with `" | "`
-   and warned about.
+   filename wins) into a `{requirement ID -> response}` mapping. Per table,
+   the requirement-ID column is detected by value scanning (column 0 by
+   default, overridden by a header-hinted column whose cells are more often
+   ID-shaped), the response column(s) by header hints (`Response`, `Answer`,
+   `Compliance`, ...) or position, an optional label column, and any other
+   columns are dropped. Requirement IDs may be numeric-dotted (`1.10`, `7.8`)
+   or alphanumeric codes (`KSA-1`); they are normalized for cross-vendor
+   correlation (uppercase, whitespace/edge punctuation trimmed, unicode
+   dashes unified) but never rewritten — `1.04` and `KPP 1.1` stay verbatim
+   and surface as their own columns for manual review. Vendor response text
+   is passed through untouched. Duplicate IDs within a vendor are joined with
+   `" | "` and warned about.
 4. **Report** — correlates requirement IDs across vendors into a wide CSV
    (one column per requirement, one row per vendor, a label row underneath the
    header) written to the working directory as `rfi_response_comparison.csv`.

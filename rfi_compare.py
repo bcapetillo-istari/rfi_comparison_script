@@ -17,8 +17,12 @@ input file, or --rfi-id, its model UUID), this script:
        where they are missing (or always, with --force) and waiting for the
        jobs to finish
     3. compiles each model's extracted-table artifacts into a single
-       requirement-ID -> response mapping (three-column tables assumed:
-       requirement ID, label, vendor response; header names may vary)
+       requirement-ID -> response mapping: per table, the requirement-ID
+       column is detected by value scanning (header-name hints as tiebreak),
+       the response/label columns by header hints or position, and any other
+       columns are dropped; IDs are normalized (uppercase, whitespace and
+       edge punctuation trimmed, unicode dashes unified) for cross-vendor
+       correlation but never rewritten ('1.04' and 'KPP 1.1' stay verbatim)
     4. correlates requirement IDs across vendors and writes a wide comparison
        matrix — one column per requirement ID, one row per vendor — as CSV in
        the working directory (default rfi_response_comparison.csv), which the
@@ -48,7 +52,24 @@ from istari_digital_client.sdk import Istari
 
 EXTRACT_FUNCTION = "@istari:extract_tables"
 
-HEADER_HINTS = {"id", "req", "requirement", "requirement id", "req id", "req_id"}
+# Header cells that name a requirement-ID column (matched by equality) and
+# ones that name a response column (matched by substring, so 'Vendor Response'
+# and 'Compliance Statement' both hit).
+HEADER_ID_HINTS = {
+    "id",
+    "req",
+    "requirement",
+    "requirement id",
+    "req id",
+    "req_id",
+    "req #",
+    "req no",
+    "req. no",
+    "req. no.",
+    "number",
+    "#",
+}
+HEADER_RESPONSE_HINTS = ("response", "answer", "compliance", "statement", "remarks")
 
 # An ID-shaped cell: numeric-dotted ('1.10', '7.8') or a short alphanumeric
 # code carrying digits ('KSA-1', 'KPP.3', 'A-2.1'). Prose ('Loiter Time',
@@ -58,24 +79,37 @@ REQ_ID_PATTERN = re.compile(r"^[A-Za-z]{0,8}[-. ]?\d+(?:[.\-]\d+)*$")
 ISTARI_API_URL = "https://api.dev.istari.app"
 ISTARI_CREDENTIALS_PATH = ".istari_credentials.json"
 
+NOT_FOUND_MSG = "Not Found - Manual review required"
+
 
 def log(msg: str) -> None:
     print(msg, file=sys.stderr)
 
 
-# ----------------------------------------------------------------------------
-# Table normalization (pure functions, no API access)
-# ----------------------------------------------------------------------------
+# Typographic dash variants (hyphen, en/em dash, minus) unified to '-'.
+_DASH_TRANSLATION = str.maketrans(dict.fromkeys("‐‑‒–—―−", "-"))
+# Stripped from the ends of an ID cell. Deliberately excludes dashes: a
+# trailing dash marks a truncated heading ('KPP 6 -'), and stripping it
+# would mint a false requirement ID.
+_EDGE_PUNCTUATION = ".,:;!?()[]{}'\""
 
 
-def looks_like_header(row: list) -> bool:
-    """True for rows that carry no requirement (headers, titles, blanks)."""
-    if not row:
-        return False
-    first = str(row[0]).strip().lower()
-    if not first or first in HEADER_HINTS:
-        return True
-    return not REQ_ID_PATTERN.match(first)
+def clean_requirement_id(cell) -> str:
+    """Normalize an ID for cross-vendor comparison — typography only.
+
+    Uppercase, trim whitespace and edge punctuation, unify unicode dashes.
+    Never rewrites the designation itself: '1.04' and 'KPP 1.1' stay verbatim
+    (vendors are accountable for their own numbering; mismatches surface as
+    separate matrix columns for manual review).
+    """
+    text = str(cell).translate(_DASH_TRANSLATION).strip()
+    return text.strip(_EDGE_PUNCTUATION).strip().upper()
+
+
+def is_requirement_id(cell) -> bool:
+    """True when the cell, once cleaned, is ID-shaped ('1.10', 'KSA-1')."""
+    cleaned = clean_requirement_id(cell)
+    return bool(cleaned and REQ_ID_PATTERN.match(cleaned))
 
 
 def req_id_key(req_id: str):
@@ -115,8 +149,8 @@ def iter_tables(data):
         yield data  # single table (list of rows)
 
 
-def rows_from_artifact(raw: bytes):
-    """Parse an artifact's bytes into rows, accepting JSON or CSV content."""
+def tables_from_artifact(raw: bytes):
+    """Parse an artifact's bytes into tables, accepting JSON or CSV content."""
     text = raw.decode("utf-8-sig", errors="replace")
     stripped = text.lstrip()
     if stripped.startswith("[") or stripped.startswith("{"):
@@ -125,54 +159,132 @@ def rows_from_artifact(raw: bytes):
         except json.JSONDecodeError:
             data = None
         if data is not None:
-            for table in iter_tables(data):
-                yield from table
+            yield from iter_tables(data)
             return
-    yield from csv.reader(io.StringIO(text))
+    rows = list(csv.reader(io.StringIO(text)))
+    if rows:
+        yield rows
 
 
-def compile_responses(rows, vendor: str):
-    """Fold three-column rows into {req_id: response} and {req_id: label}.
+def detect_columns(table):
+    """Decide which columns hold the requirement ID, label, and response(s).
 
-    Rows are taken as (requirement ID, label, response); extra columns are
-    joined into the response, short rows are padded. Header rows and blank
-    rows are skipped. Duplicate IDs are joined with ' | ' and warned about.
+    The ID column is found by value scanning: column 0 by default, overridden
+    by a header-hinted column whose cells are more often ID-shaped (so a
+    'Requirement, Req ID, Response' layout still correlates). Response
+    columns come from header hints; without any, the column after the label
+    (extras joined), or the sole other column in a two-column table. Columns
+    identified as none of the three are dropped.
+
+    Returns (id_col, label_col, resp_cols, header_idx); label_col and
+    header_idx may be None.
+    """
+    width = max(len(row) for row in table)
+
+    def norm(cell):
+        return str(cell or "").strip().lower()
+
+    header_idx = None
+    for i, row in enumerate(table[:3]):
+        if any(is_requirement_id(c) for c in row):
+            continue  # data rows carry IDs; header rows never do
+        cells = [norm(c) for c in row]
+        if any(c in HEADER_ID_HINTS for c in cells) or any(
+            hint in c for c in cells for hint in HEADER_RESPONSE_HINTS
+        ):
+            header_idx = i
+            break
+    header = table[header_idx] if header_idx is not None else []
+    data = table[header_idx + 1 :] if header_idx is not None else table
+
+    def id_share(col):
+        if not data:
+            return 0.0
+        hits = sum(1 for r in data if col < len(r) and is_requirement_id(r[col]))
+        return hits / len(data)
+
+    id_col = 0
+    hinted = [i for i, cell in enumerate(header) if norm(cell) in HEADER_ID_HINTS]
+    best = max(hinted, key=id_share, default=None)
+    if best is not None and id_share(best) > id_share(0):
+        id_col = best
+
+    resp_cols = [
+        i
+        for i, cell in enumerate(header)
+        if i != id_col and any(hint in norm(cell) for hint in HEADER_RESPONSE_HINTS)
+    ]
+    remaining = [i for i in range(width) if i != id_col and i not in resp_cols]
+    label_col = None
+    if resp_cols:
+        label_col = remaining[0] if remaining else None
+    elif len(remaining) == 1:
+        resp_cols = remaining
+    elif remaining:
+        label_col, resp_cols = remaining[0], remaining[1:]
+    return id_col, label_col, resp_cols, header_idx
+
+
+def compile_tables(tables, vendor: str):
+    """Fold extracted tables into {req_id: response} and {req_id: label}.
+
+    Column roles are detected per table (see detect_columns); requirement IDs
+    are normalized with clean_requirement_id so typographic variants
+    correlate across vendors. Rows whose ID cell isn't ID-shaped (headers,
+    titles, prose) are skipped. Duplicate IDs are joined with ' | ' and
+    warned about in the log (this catches numbering typos like a second '1.1' meant as
+    '1.10').
     """
     responses: dict[str, str] = {}
     labels: dict[str, str] = {}
-    for row in rows:
-        row = [str(c).strip() for c in row]
-        if not row or not any(row) or looks_like_header(row):
+    for index, table in enumerate(tables, 1):
+        if not table:
             continue
-        if len(row) > 3:
-            row = row[:2] + [", ".join(c for c in row[2:] if c)]
-        while len(row) < 3:
-            row.append("")
-        rid, label, response = row
-        if rid in responses:
-            log(
-                f"warning: {vendor}: duplicate requirement ID {rid!r} — "
-                f"responses joined with ' | ' (check for a numbering typo)"
+        id_col, label_col, resp_cols, header_idx = detect_columns(table)
+        log(
+            f"{vendor}: table {index}: id=col {id_col}, "
+            f"label={f'col {label_col}' if label_col is not None else 'none'}, "
+            f"response=col(s) {resp_cols or 'none'}"
+            + (
+                f", header row {header_idx}"
+                if header_idx is not None
+                else ", no header"
             )
-            responses[rid] = f"{responses[rid]} | {response}"
-        else:
-            responses[rid] = response
-        labels.setdefault(rid, label)
+        )
+        start = header_idx + 1 if header_idx is not None else 0
+        for row in table[start:]:
+            cells = ["" if c is None else str(c).strip() for c in row]
+            rid = clean_requirement_id(cells[id_col]) if id_col < len(cells) else ""
+            if not rid or not REQ_ID_PATTERN.match(rid):
+                continue
+            label = (
+                cells[label_col]
+                if label_col is not None and label_col < len(cells)
+                else ""
+            )
+            response = ", ".join(
+                c for c in (cells[i] for i in resp_cols if i < len(cells)) if c
+            )
+            if rid in responses:
+                log(
+                    f"warning: {vendor}: duplicate requirement ID {rid!r} — "
+                    f"responses joined with ' | ' (check for a numbering typo)"
+                )
+                responses[rid] = f"{responses[rid]} | {response}"
+            else:
+                responses[rid] = response
+            labels.setdefault(rid, label)
     return responses, labels
 
 
 def build_matrix(vendors: list[tuple[str, dict]], labels: dict[str, str]):
     """Wide matrix: header of requirement IDs, label row, one row per vendor."""
+    # Builds a union of all requirement IDs found in all responses
     all_ids = sorted({rid for _, resp in vendors for rid in resp}, key=req_id_key)
     rows = [["vendor", *all_ids], ["", *(labels.get(rid, "") for rid in all_ids)]]
     for vendor, responses in vendors:
-        rows.append([vendor, *(responses.get(rid, "") for rid in all_ids)])
+        rows.append([vendor, *(responses.get(rid, NOT_FOUND_MSG) for rid in all_ids)])
     return rows
-
-
-# ----------------------------------------------------------------------------
-# Istari access
-# ----------------------------------------------------------------------------
 
 
 def type_name(resource_type) -> str:
@@ -275,13 +387,13 @@ def vendor_name(model) -> str:
     return Path(name).stem
 
 
-def gather_rows(artifacts):
-    """Parse a vendor's artifacts into rows, avoiding double counting.
+def gather_tables(artifacts):
+    """Parse a vendor's artifacts into tables, avoiding double counting.
 
     Extraction produces both a combined tables.json and one CSV per table, and
     a re-extracted model carries a second full set — so keep only the newest
     artifact per filename, and prefer the JSON (falling back to the CSVs only
-    when no JSON yields rows).
+    when no JSON yields any rows).
     """
     by_name: dict = {}
     for a in artifacts:
@@ -293,15 +405,16 @@ def gather_rows(artifacts):
     arts = list(by_name.values())
     json_arts = [a for a in arts if (a.extension or "").lower().lstrip(".") == "json"]
     csv_arts = [a for a in arts if a not in json_arts]
-    rows = []
+    tables = []
     for a in json_arts:
-        rows.extend(rows_from_artifact(a.read_bytes()))
+        tables.extend(tables_from_artifact(a.read_bytes()))
     used = json_arts
-    if not rows:
+    if not any(tables):
+        tables = []
         for a in csv_arts:
-            rows.extend(rows_from_artifact(a.read_bytes()))
+            tables.extend(tables_from_artifact(a.read_bytes()))
         used = csv_arts
-    return rows, used
+    return tables, used
 
 
 def main() -> int:
@@ -397,8 +510,8 @@ def main() -> int:
                 f"warning: {vendor_name(model)}: no extracted-table artifacts found — skipping"
             )
             continue
-        rows, used = gather_rows(artifacts)
-        responses, names = compile_responses(rows, vendor_name(model))
+        tables, used = gather_tables(artifacts)
+        responses, names = compile_tables(tables, vendor_name(model))
         log(
             f"{vendor_name(model)}: {len(responses)} requirements from "
             f"{len(used)} artifact(s): {', '.join(a.name or '?' for a in used)}"
