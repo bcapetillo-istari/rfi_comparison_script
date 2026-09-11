@@ -1,7 +1,7 @@
 [project]
 name = "rfi-comparison-script"
 version = "1.0.0"
-description = "Cross-vendor RFI response comparison for Istari systems, packaged as a cl_module function"
+description = "Cross-vendor RFI response table comparison for Istari systems, packaged as a cl_module function"
 authors = [{ name = "Benjamin Capetillo", email = "bcapetillo@istaridigital.com" }]
 readme = "README.md"
 requires-python = ">=3.10,<4.0"
@@ -18,6 +18,9 @@ packages = [{ include = "rfi_compare.py" }]
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3"
+
+[tool.poetry.group.build.dependencies]
+pyinstaller = {version = "6.22.2", python = ">=3.10,<3.16"}
 
 [build-system]
 requires = ["poetry-core>=2.0"]

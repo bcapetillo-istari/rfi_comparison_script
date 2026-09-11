@@ -78,6 +78,9 @@ REQ_ID_PATTERN = re.compile(r"^[A-Za-z]{0,8}[-. ]?\d+(?:[.\-]\d+)*$")
 
 NOT_FOUND_MSG = "Not Found - Manual review required"
 
+# Keep in sync with pyproject.toml
+VERSION = "1.0.0"
+
 
 def log(msg: str) -> None:
     print(f"{time.strftime('%H:%M:%S')} {msg}", file=sys.stderr)
@@ -475,6 +478,16 @@ def main() -> int:
         help=f"Seconds to wait for each extraction job (default: {DEFAULT_JOB_TIMEOUT_S:g})",
     )
     args = ap.parse_args()
+
+    rfi_ref = (
+        f"file:{args.rfi_file}" if args.rfi_file is not None else f"id:{args.rfi_id}"
+    )
+    log(
+        f"rfi_compare v{VERSION}: api={ISTARI_API_URL} "
+        f"credentials={ISTARI_CREDENTIALS_PATH} system={args.system_id} "
+        f"branch={args.branch} rfi={rfi_ref} function={args.function} "
+        f"force={args.force} job-timeout={args.job_timeout:g}s output={args.output}"
+    )
 
     client = Istari(
         config=Configuration(

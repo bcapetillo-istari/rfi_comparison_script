@@ -42,13 +42,17 @@ jobs:
         with:
           python-version: '3.12'
 
-      # Runtime dependencies come from pyproject.toml (PEP 621 [project] table);
-      # PyInstaller is build-time only and deliberately not a project dependency.
-      - name: Install dependencies
-        run: pip install . pyinstaller
+      # poetry.lock is the single source of pinned versions; installing through
+      # Poetry means a rebuild ships exactly the tested set instead of
+      # re-resolving pyproject.toml's ranges at build time. PyInstaller is
+      # locked too (the "build" group).
+      - name: Install dependencies (locked)
+        run: |
+          pip install poetry==2.4.2
+          poetry install --only main,build
 
       - name: Build executable
-        run: pyinstaller --onefile --name rfi_compare rfi_compare.py
+        run: poetry run pyinstaller --onefile --name rfi_compare rfi_compare.py
 
       - uses: actions/upload-artifact@v4
         with:

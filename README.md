@@ -57,21 +57,30 @@ Options:
 |---|---|---|
 | `--rfi-file PATH` | — | Local RFI file; the matching tracked model is excluded (required, or `--rfi-id`) |
 | `--rfi-id UUID` | — | RFI model UUID to exclude (alternative to `--rfi-file`) |
-| `--branch NAME` | `main` | System branch to read models from (falls back to the sole branch) |
+| `--branch NAME` | `baseline` | System branch to read models from (falls back to the sole branch) |
 | `--force` | off | Re-run extraction even when table artifacts exist |
 | `--function NAME` | `@istari:extract_tables` | Extraction function to submit |
 | `-o PATH` | `rfi_response_comparison.csv` | Report path |
-| `--job-timeout SECS` | `900` | Max wait per extraction job |
+| `--job-timeout SECS` | `3600` | Max wait per extraction job |
 
-### Authentication
+### Configuration & authentication
 
-The client is currently pinned to the dev environment
-(`https://api.dev.istari.app`) with identity-service auth and expects
-`.istari_credentials.json` (the identity-service client-credentials JSON:
-`clientId` / `keyId` / `key`) **in the working directory**. In the module,
-`run_rfi_compare.sh` stages the credentials into the job's working directory
-and removes them before exit so they are never uploaded as a job output.
-A `.env` in the working directory is also loaded if present.
+Deployment configuration is read from environment variables (a `.env` in the
+working directory is loaded first for local dev; real environment variables
+win):
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `ISTARI_API_URL` | `https://api.dev.istari.app` | Registry to connect to |
+| `ISTARI_CREDENTIALS_PATH` | `.istari_credentials.json` | Identity-service client-credentials JSON (`clientId` / `keyId` / `key`) |
+| `EXTRACT_FUNCTION` | `@istari:extract_tables` | Default extraction function (`--function` overrides) |
+| `DEFAULT_JOB_TIMEOUT_S` | `3600` | Default extraction wait (`--job-timeout` overrides) |
+
+In the module, these are set in `module_config.json`'s `environment` block,
+with `ISTARI_CREDENTIALS_PATH` pointing at the credentials file's permanent
+location in the module install directory (`chmod 600`). The credentials are
+read in place — they never enter the job's working directory, which is
+uploaded as a job output.
 
 ### Note on viewing the report
 
@@ -96,9 +105,13 @@ The cl_module ships a self-contained binary. Cross-compiling from macOS is not
 possible, so the build runs PyInstaller inside a Linux container:
 
 ```sh
-./build_linux.sh            # linux/amd64 -> dist/linux-amd64/rfi_compare
-./build_linux.sh arm64      # linux/arm64
+./scripts/build_linux.sh            # linux/amd64 -> dist/linux-amd64/rfi_compare
+./scripts/build_linux.sh arm64      # linux/arm64
 ```
+
+Tagged releases (`v*`) also build Linux/Windows/macOS executables via the
+GitHub Actions workflow (`.github/workflows/build.yml`); the Linux leg runs in
+the same bullseye container as the local script.
 
 The image base is `python:3.12-slim-bullseye` (glibc 2.31) so the binary runs
 on Ubuntu 20.04+ / Debian 11+ / RHEL 9+. Copy the result over
@@ -106,10 +119,13 @@ on Ubuntu 20.04+ / Debian 11+ / RHEL 9+. Copy the result over
 
 ## cl_module wiring (module repo)
 
+Reference copies of the module files live in `cl_module_config_files/`.
 `module_manifest.json` function inputs: `input_model` (`user_model`) and
-`system_id` (`parameter`). `module_config.json` arguments:
+`system_id` (`parameter`). `module_config.json` invokes the binary directly
+(no wrapper script) and carries the environment block described above:
 
 ```json
+"executable": "$RFI_MODULE_DIR/scripts/rfi_compare",
 "arguments": ["\"$system_id\"", "--rfi-file", "\"$input_model\""]
 ```
 
@@ -117,6 +133,3 @@ The system ID must stay a parameter: the job runner passes no system/job
 metadata to functions, and a model can be tracked by multiple systems, so the
 input file alone cannot disambiguate which vendor set to compare against.
 
-## To Do
-
-5. Add typing to code.

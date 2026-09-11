@@ -1,5 +1,5 @@
 {
-  "CompareRfiResponses": {
+  "CompareRfiResponseTables": {
     "executable": "$RFI_MODULE_DIR/scripts/rfi_compare",
     "arguments": [
       "\"$system_id\"",
