@@ -434,6 +434,12 @@ def main() -> int:
     ISTARI_CREDENTIALS_PATH = os.environ.get(
         "ISTARI_CREDENTIALS_PATH", ".istari_credentials.json"
     )
+    # Optional PAT auth: if set, points at a file whose contents are a
+    # personal access token; identity-service auth is skipped entirely.
+    # Demo-environment expedient — identity-service remains the production
+    # mechanism (PATs are long-lived bearer secrets and deprecated on some
+    # registries).
+    ISTARI_PAT_PATH = os.environ.get("ISTARI_PAT_PATH")
     DEFAULT_JOB_TIMEOUT_S = float(os.environ.get("DEFAULT_JOB_TIMEOUT_S", 3600))
 
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
@@ -482,20 +488,30 @@ def main() -> int:
     rfi_ref = (
         f"file:{args.rfi_file}" if args.rfi_file is not None else f"id:{args.rfi_id}"
     )
+    auth = (
+        f"pat (token file: {ISTARI_PAT_PATH})"
+        if ISTARI_PAT_PATH
+        else f"identity-service (credentials: {ISTARI_CREDENTIALS_PATH})"
+    )
     log(
-        f"rfi_compare v{VERSION}: api={ISTARI_API_URL} "
-        f"credentials={ISTARI_CREDENTIALS_PATH} system={args.system_id} "
+        f"rfi_compare v{VERSION}: api={ISTARI_API_URL} auth={auth} "
+        f"system={args.system_id} "
         f"branch={args.branch} rfi={rfi_ref} function={args.function} "
         f"force={args.force} job-timeout={args.job_timeout:g}s output={args.output}"
     )
 
-    client = Istari(
-        config=Configuration(
+    if ISTARI_PAT_PATH:
+        config = Configuration(
+            registry_url=ISTARI_API_URL,
+            registry_auth_token=Path(ISTARI_PAT_PATH).read_text().strip(),
+        )
+    else:
+        config = Configuration(
             digital_api_url=ISTARI_API_URL,
             identity_service_secret_file=ISTARI_CREDENTIALS_PATH,
             identity_service_enabled=True,
         )
-    )
+    client = Istari(config=config)
 
     if args.rfi_file is not None and not args.rfi_file.is_file():
         log(f"error: RFI file not found: {args.rfi_file}")
