@@ -173,7 +173,12 @@ class FakeBranches:
         return self._branches
 
     def list_files(self, branch, name=None):
-        return [f for f in self._files if name is None or f.name == name]
+        # Real SDK (13.0.x) matches name as a case-insensitive substring.
+        return [
+            f
+            for f in self._files
+            if name is None or name.lower() in (f.name or "").lower()
+        ]
 
 
 def fake_client(branches=(), files=()):
@@ -266,21 +271,199 @@ class TestListResponseModels:
 
     def test_excludes_rfi_by_file_and_non_models(self, tmp_path):
         client, branch, rfi_file = self._system(tmp_path)
-        models = rc.list_response_models(client, branch, None, rfi_file)
+        models, rfi = rc.list_response_models(client, branch, None, rfi_file)
         assert sorted(m.resource_id for m in models) == ["a", "b"]
+        assert rfi.resource_id == "rfi-id"
 
     def test_excludes_rfi_by_id(self, tmp_path):
         client, branch, _ = self._system(tmp_path)
-        models = rc.list_response_models(client, branch, "rfi-id", None)
+        models, rfi = rc.list_response_models(client, branch, "rfi-id", None)
         assert sorted(m.resource_id for m in models) == ["a", "b"]
+        assert rfi.resource_id == "rfi-id"
 
     def test_unidentified_rfi_warns_and_keeps_all(self, tmp_path, capsys):
         client, branch, _ = self._system(tmp_path)
         stray = tmp_path / "unrelated.pdf"
         stray.write_bytes(b"not in system")
-        models = rc.list_response_models(client, branch, None, stray)
+        models, rfi = rc.list_response_models(client, branch, None, stray)
         assert sorted(m.resource_id for m in models) == ["a", "b", "rfi-id"]
+        assert rfi is None
         assert "could not identify the RFI" in capsys.readouterr().err
+
+
+# ----------------------------------------------------------------------------
+# Report lineage
+# ----------------------------------------------------------------------------
+
+class FakeLineageClient:
+    def __init__(self, types=({"name": "produces", "id": "rt-1"},),
+                 create_fails=False, edge_fails_for=(), tracked=(),
+                 prior_revisions=()):
+        self.edges = []
+        self.commits = []
+        self.revision_uploads = []
+        self._types = [SimpleNamespace(**t) for t in types]
+        self._create_fails = create_fails
+        self._edge_fails_for = set(edge_fails_for)
+        self._tracked = list(tracked)
+        self._revisions = list(prior_revisions)
+
+        outer = self
+
+        class Relationships:
+            def list_types(self, size=None):
+                return outer._types
+
+            def create(self, *, left_revision_id, right_revision_id,
+                       relationship_type_id):
+                if left_revision_id in outer._edge_fails_for:
+                    raise RuntimeError("edge rejected")
+                outer.edges.append(
+                    (left_revision_id, right_revision_id, relationship_type_id))
+
+        class Revisions:
+            def get(self, resource_id, revision_id):
+                return SimpleNamespace(id=revision_id,
+                                       file_id=f"file-{resource_id}")
+
+            def create(self, resource_id, path, **kw):
+                outer.revision_uploads.append(resource_id)
+                outer._revisions.append("rev-art-2")
+                return SimpleNamespace(id="rev-art-2",
+                                       file_id=f"file-{resource_id}")
+
+            def list(self, resource_id):
+                return [SimpleNamespace(id=r, archived=False)
+                        for r in outer._revisions]
+
+        class Resources:
+            relationships = Relationships()
+            revisions = Revisions()
+            _engine = SimpleNamespace(v2_api=SimpleNamespace(
+                archive_file_revision=lambda rid: outer.archived.append(rid)))
+
+            def _call(self, fn, *args, **kw):
+                return fn(*args, **kw)
+
+            def create(self, path, resource_type, **kw):
+                if outer._create_fails:
+                    raise RuntimeError("upload rejected")
+                assert resource_type == "ARTIFACT"
+                outer._revisions.append("rev-art-1")
+                return SimpleNamespace(resource_id="art-1",
+                                       file_revision_id="rev-art-1")
+
+        class Branches:
+            def list_files(self, branch, name=None):
+                # tracked entries mimic a previously tracked report: same
+                # filename as the report under test ('r.csv'), owned by art-1
+                return [SimpleNamespace(file_revision_id=r, name="r.csv",
+                                        resource_id="art-1",
+                                        resource_type="ARTIFACT")
+                        for r in outer._tracked]
+
+            def commit(self, branch, add=None, remove=None):
+                outer.commits.append((tuple(a.id for a in add or ()),
+                                      tuple(r.id for r in remove or ())))
+
+        self.resources = Resources()
+        self.systems = SimpleNamespace(branches=Branches())
+
+
+class TestRecordReportLineage:
+    def _models(self):
+        return [fake_model("vendor_a.pdf", "a"), fake_model("vendor_b.pdf", "b")]
+
+    def test_links_every_compared_model(self, tmp_path, capsys):
+        client = FakeLineageClient()
+        rc.record_report_lineage(client, self._models(), tmp_path / "r.csv")
+        assert client.edges == [
+            ("rev-a", "rev-art-1", "rt-1"),
+            ("rev-b", "rev-art-1", "rt-1"),
+        ]
+        assert "linked to 2/2 source revision(s)" in capsys.readouterr().err
+
+    def test_missing_produces_type_warns_without_edges(self, tmp_path, capsys):
+        client = FakeLineageClient(types=({"name": "other", "id": "rt-9"},))
+        rc.record_report_lineage(client, self._models(), tmp_path / "r.csv")
+        assert client.edges == []
+        assert "no 'produces' relationship type" in capsys.readouterr().err
+
+    def test_single_edge_failure_does_not_stop_others(self, tmp_path, capsys):
+        client = FakeLineageClient(edge_fails_for={"rev-a"})
+        rc.record_report_lineage(client, self._models(), tmp_path / "r.csv")
+        assert client.edges == [("rev-b", "rev-art-1", "rt-1")]
+        err = capsys.readouterr().err
+        assert "could not link vendor_a" in err
+        assert "linked to 1/2" in err
+
+    def test_upload_failure_is_nonfatal(self, tmp_path, capsys):
+        client = FakeLineageClient(create_fails=True)
+        rc.record_report_lineage(client, self._models(), tmp_path / "r.csv")
+        assert client.edges == []
+        assert "could not record report lineage" in capsys.readouterr().err
+
+    def test_remove_local_deletes_copy_after_upload(self, tmp_path):
+        report = tmp_path / "r.csv"
+        report.write_text("vendor\n")
+        rc.record_report_lineage(FakeLineageClient(), self._models(), report,
+                                 remove_local=True)
+        assert not report.exists()
+
+    def test_remove_local_keeps_copy_when_upload_fails(self, tmp_path):
+        report = tmp_path / "r.csv"
+        report.write_text("vendor\n")
+        rc.record_report_lineage(FakeLineageClient(create_fails=True),
+                                 self._models(), report, remove_local=True)
+        assert report.exists()  # fallback: rides the job's working-dir output
+
+    def test_local_copy_kept_by_default(self, tmp_path):
+        report = tmp_path / "r.csv"
+        report.write_text("vendor\n")
+        rc.record_report_lineage(FakeLineageClient(), self._models(), report)
+        assert report.exists()  # manual CLI runs keep their CSV
+
+    def test_first_run_creates_and_tracks_once(self, tmp_path, capsys):
+        client = FakeLineageClient()
+        rc.record_report_lineage(client, self._models(), tmp_path / "r.csv",
+                                 branch=SimpleNamespace(tag="baseline"))
+        # one commit, pinned to the first revision — same shape as a UI upload
+        assert client.commits == [(("rev-art-1",), ())]
+        assert "report tracked on branch 'baseline'" in capsys.readouterr().err
+
+    def test_rerun_adds_revision_and_repins(self, tmp_path, capsys):
+        client = FakeLineageClient(tracked=("rev-old-report",),
+                                   prior_revisions=("rev-art-1",))
+        rc.record_report_lineage(client, self._models(), tmp_path / "r.csv",
+                                 branch=SimpleNamespace(tag="baseline"))
+        # uploaded as a revision of the existing artifact, not a new resource
+        assert client.revision_uploads == ["art-1"]
+        # edges attach to the NEW revision
+        assert client.edges == [
+            ("rev-a", "rev-art-2", "rt-1"),
+            ("rev-b", "rev-art-2", "rt-1"),
+        ]
+        # pin advanced in one commit; remove carries BOTH the entry's
+        # pre-upload pin and the new revision, covering either matching
+        # semantics (unmatched ids are no-ops)
+        assert client.commits == [(("rev-art-2",), ("rev-old-report", "rev-art-2"))]
+        err = capsys.readouterr().err
+        assert "uploaded new revision" in err
+        assert "re-pinned to the new revision" in err
+
+    def test_tracking_failure_keeps_local_copy(self, tmp_path, capsys, monkeypatch):
+        client = FakeLineageClient()
+
+        def boom(branch, add=None, remove=None):
+            raise RuntimeError("commit rejected")
+        client.systems.branches.commit = boom
+        report = tmp_path / "r.csv"
+        report.write_text("vendor\n")
+        rc.record_report_lineage(client, self._models(), report,
+                                 branch=SimpleNamespace(tag="baseline"),
+                                 remove_local=True)
+        assert report.exists()  # fallback: rides the job's working-dir output
+        assert "could not record report lineage" in capsys.readouterr().err
 
 
 # ----------------------------------------------------------------------------
