@@ -45,18 +45,6 @@ class TestIsRequirementId:
         assert not rc.is_requirement_id(cell)
 
 
-class TestReqIdKey:
-    def test_numeric_dotted_order(self):
-        ids = ["1.11", "1.2", "10.1", "1.1", "2.1", "1.10"]
-        assert sorted(ids, key=rc.req_id_key) == [
-            "1.1", "1.2", "1.10", "1.11", "2.1", "10.1"]
-
-    def test_alphanumeric_order_and_placement(self):
-        ids = ["KSA-10", "1.1", "KSA-2", "KSA-1", "10.2"]
-        assert sorted(ids, key=rc.req_id_key) == [
-            "1.1", "10.2", "KSA-1", "KSA-2", "KSA-10"]
-
-
 # ----------------------------------------------------------------------------
 # Artifact parsing
 # ----------------------------------------------------------------------------
@@ -146,6 +134,19 @@ class TestBuildMatrix:
         assert matrix[2] == ["alpha", "a1", "a10", rc.NOT_FOUND_MSG]
         assert matrix[3] == ["bravo", "b1", rc.NOT_FOUND_MSG, "bk"]
 
+    def test_numeric_aware_order(self):
+        ids = ["1.11", "1.2", "10.1", "1.1", "KSA-10", "KSA-2", "2.1", "1.10"]
+        assert sorted(ids, key=rc.req_id_key) == [
+            "1.1", "1.2", "1.10", "1.11", "2.1", "10.1", "KSA-2", "KSA-10"]
+
+    def test_header_order_is_deterministic_for_id_variants(self):
+        # '1.4' and '1.04' share a numeric key; the raw-text tiebreak keeps
+        # repeated runs producing identical header rows
+        vendors = [("alpha", {"1.4": "a", "1.04": "b", "KPP 1.1": "c"})]
+        for _ in range(3):
+            matrix = rc.build_matrix(vendors, {})
+            assert matrix[0] == ["vendor", "1.04", "1.4", "KPP 1.1"]
+
 
 # ----------------------------------------------------------------------------
 # Fakes for Istari objects
@@ -173,7 +174,12 @@ class FakeBranches:
         return self._branches
 
     def list_files(self, branch, name=None):
-        return [f for f in self._files if name is None or f.name == name]
+        # Real SDK (13.0.x) matches name as a case-insensitive substring.
+        return [
+            f
+            for f in self._files
+            if name is None or name.lower() in (f.name or "").lower()
+        ]
 
 
 def fake_client(branches=(), files=()):
@@ -266,21 +272,270 @@ class TestListResponseModels:
 
     def test_excludes_rfi_by_file_and_non_models(self, tmp_path):
         client, branch, rfi_file = self._system(tmp_path)
-        models = rc.list_response_models(client, branch, None, rfi_file)
+        models, rfi = rc.list_response_models(client, branch, None, rfi_file)
         assert sorted(m.resource_id for m in models) == ["a", "b"]
+        assert rfi.resource_id == "rfi-id"
 
     def test_excludes_rfi_by_id(self, tmp_path):
         client, branch, _ = self._system(tmp_path)
-        models = rc.list_response_models(client, branch, "rfi-id", None)
+        models, rfi = rc.list_response_models(client, branch, "rfi-id", None)
         assert sorted(m.resource_id for m in models) == ["a", "b"]
+        assert rfi.resource_id == "rfi-id"
+
+    def test_report_model_never_treated_as_vendor(self, tmp_path):
+        # the report is uploaded as a MODEL; a tracked copy must be excluded
+        # from the response set or each run would ingest its own output
+        rfi_bytes = b"RFI DOCUMENT"
+        rfi_file = tmp_path / "rfi.pdf"
+        rfi_file.write_bytes(rfi_bytes)
+        branch = SimpleNamespace(tag="baseline")
+        files = [
+            fake_model("rfi.pdf", "rfi-id", rfi_bytes),
+            fake_model(rc.REPORT_FILENAME, "report-id", b"vendor,1.1\n"),
+            fake_model("vendor_a.pdf", "a", b"aaa"),
+        ]
+        client = fake_client(branches=[branch], files=files)
+        models, _ = rc.list_response_models(client, branch, None, rfi_file)
+        assert sorted(m.resource_id for m in models) == ["a"]
 
     def test_unidentified_rfi_warns_and_keeps_all(self, tmp_path, capsys):
         client, branch, _ = self._system(tmp_path)
         stray = tmp_path / "unrelated.pdf"
         stray.write_bytes(b"not in system")
-        models = rc.list_response_models(client, branch, None, stray)
+        models, rfi = rc.list_response_models(client, branch, None, stray)
         assert sorted(m.resource_id for m in models) == ["a", "b", "rfi-id"]
+        assert rfi is None
         assert "could not identify the RFI" in capsys.readouterr().err
+
+
+# ----------------------------------------------------------------------------
+# Report lineage
+# ----------------------------------------------------------------------------
+
+class FakeWriter:
+    """Legacy-client stand-in capturing add_model/update_model uploads.
+
+    Sources are recorded as (revision_id, relationship_identifier) tuples —
+    the registry turns each NewSource into a 'produces' edge, so capturing
+    what was sent is the whole lineage contract at this level.
+    """
+
+    def __init__(self, fail=False):
+        self._fail = fail
+        self.adds = []     # [(path, [(rev_id, rel_id), ...])]
+        self.updates = []  # [(model_id, path, [(rev_id, rel_id), ...])]
+        self.descriptions = []
+
+    @staticmethod
+    def _model(model_id, rev_id):
+        return SimpleNamespace(
+            id=model_id,
+            file=SimpleNamespace(
+                id=f"file-{model_id}",
+                revisions=[SimpleNamespace(id=rev_id, file_id=f"file-{model_id}")],
+            ),
+        )
+
+    @staticmethod
+    def _sources(sources):
+        return [(s.revision_id, s.relationship_identifier) for s in sources or []]
+
+    def add_model(self, path, sources=None, **kw):
+        if self._fail:
+            raise RuntimeError("upload rejected")
+        self.adds.append((Path(path).name, self._sources(sources)))
+        self.descriptions.append(kw.get("description"))
+        return self._model("art-1", "rev-art-1")
+
+    def update_model(self, model_id, path, sources=None, **kw):
+        if self._fail:
+            raise RuntimeError("upload rejected")
+        self.updates.append((model_id, Path(path).name, self._sources(sources)))
+        self.descriptions.append(kw.get("description"))
+        return self._model(model_id, "rev-art-2")
+
+
+class FakeLineageClient:
+    def __init__(self, tracked=()):
+        # tracked: (pinned_revision_id, resource_type) per existing branch entry
+        self.commits = []
+        self._tracked = list(tracked)
+        outer = self
+
+        class Branches:
+            def list_files(self, branch, name=None):
+                # tracked entries mimic a previously tracked report: same
+                # filename as the report under test ('r.csv'), owned by art-1.
+                # As in the real SDK, current_file_revision_id is the revision
+                # the branch entry is pinned to, while file_revision_id is the
+                # resource's latest revision — deliberately different here so a
+                # regression to the wrong field fails the re-pin assertions.
+                return [SimpleNamespace(current_file_revision_id=r,
+                                        file_revision_id="rev-art-1",
+                                        name="r.csv",
+                                        resource_id="art-1",
+                                        resource_type=t)
+                        for (r, t) in outer._tracked]
+
+            def commit(self, branch, add=None, remove=None):
+                outer.commits.append((tuple(a.id for a in add or ()),
+                                      tuple(r.id for r in remove or ())))
+
+        self.systems = SimpleNamespace(branches=Branches())
+
+
+class TestRecordReportLineage:
+    @pytest.fixture
+    def writer(self, monkeypatch):
+        w = FakeWriter()
+        monkeypatch.setattr(rc, "Client", lambda config=None: w)
+        return w
+
+    @pytest.fixture
+    def failing_writer(self, monkeypatch):
+        w = FakeWriter(fail=True)
+        monkeypatch.setattr(rc, "Client", lambda config=None: w)
+        return w
+
+    def _models(self):
+        return [fake_model("vendor_a.pdf", "a"), fake_model("vendor_b.pdf", "b")]
+
+    def test_sources_ride_the_upload(self, tmp_path, capsys, writer):
+        rc.record_report_lineage(FakeLineageClient(), None, self._models(),
+                                 tmp_path / "r.csv")
+        assert writer.adds == [
+            ("r.csv", [("rev-a", "input"), ("rev-b", "input")]),
+        ]
+        assert "with 2 source(s)" in capsys.readouterr().err
+
+    def test_rfi_recorded_in_description_not_graph(self, tmp_path, writer):
+        # the RFI has no extraction artifact, and citing its (always-pinned)
+        # model revision would pin every report revision into the files panel
+        rfi = fake_model("rfi.pdf", "rfi-id")
+        rc.record_report_lineage(FakeLineageClient(), None, self._models(),
+                                 tmp_path / "r.csv", rfi=rfi)
+        (_, sources), = writer.adds
+        assert ("rev-rfi-id", "input") not in sources
+        assert "RFI: rfi.pdf, revision rev-rfi-id" in writer.descriptions[0]
+
+    def test_upload_failure_is_nonfatal(self, tmp_path, capsys, failing_writer):
+        client = FakeLineageClient()
+        rc.record_report_lineage(client, None, self._models(), tmp_path / "r.csv")
+        assert client.commits == []
+        assert "could not record report lineage" in capsys.readouterr().err
+
+    def test_writer_construction_failure_is_nonfatal(self, tmp_path, capsys,
+                                                     monkeypatch):
+        def boom(config=None):
+            raise RuntimeError("auth rejected")
+        monkeypatch.setattr(rc, "Client", boom)
+        client = FakeLineageClient()
+        rc.record_report_lineage(client, None, self._models(), tmp_path / "r.csv")
+        assert client.commits == []
+        assert "could not record report lineage" in capsys.readouterr().err
+
+    def test_remove_local_deletes_copy_after_upload(self, tmp_path, writer):
+        report = tmp_path / "r.csv"
+        report.write_text("vendor\n")
+        rc.record_report_lineage(FakeLineageClient(), None, self._models(),
+                                 report, remove_local=True)
+        assert not report.exists()
+
+    def test_remove_local_keeps_copy_when_upload_fails(self, tmp_path,
+                                                       failing_writer):
+        report = tmp_path / "r.csv"
+        report.write_text("vendor\n")
+        rc.record_report_lineage(FakeLineageClient(), None, self._models(),
+                                 report, remove_local=True)
+        assert report.exists()  # fallback: rides the job's working-dir output
+
+    def test_local_copy_kept_by_default(self, tmp_path, writer):
+        report = tmp_path / "r.csv"
+        report.write_text("vendor\n")
+        rc.record_report_lineage(FakeLineageClient(), None, self._models(), report)
+        assert report.exists()  # manual CLI runs keep their CSV
+
+    def test_first_run_creates_and_tracks_once(self, tmp_path, capsys, writer):
+        client = FakeLineageClient()
+        rc.record_report_lineage(client, None, self._models(), tmp_path / "r.csv",
+                                 branch=SimpleNamespace(tag="baseline"))
+        # one commit, pinned to the first revision — same shape as a UI upload
+        assert client.commits == [(("rev-art-1",), ())]
+        assert "report tracked on branch 'baseline'" in capsys.readouterr().err
+
+    def test_rerun_adds_revision_and_repins(self, tmp_path, capsys, writer):
+        client = FakeLineageClient(
+            tracked=[("rev-old-report", rc.REPORT_RESOURCE_TYPE)])
+        report = tmp_path / "r.csv"
+        report.write_text("content\n")
+        rc.record_report_lineage(client, None, self._models(), report,
+                                 branch=SimpleNamespace(tag="baseline"))
+        # uploaded as a revision of the existing model, with fresh sources
+        assert writer.updates == [
+            ("art-1", "r.csv", [("rev-a", "input"), ("rev-b", "input")]),
+        ]
+        assert writer.adds == []
+        # pin advanced in one commit; remove carries BOTH the entry's
+        # pre-upload pin and the new revision, covering either matching
+        # semantics (unmatched ids are no-ops)
+        assert client.commits == [(("rev-art-2",), ("rev-old-report", "rev-art-2"))]
+        err = capsys.readouterr().err
+        assert "uploaded new revision" in err
+        assert "re-pinned to the new revision" in err
+
+    def test_identical_content_still_gets_a_revision(self, tmp_path, writer):
+        # revision history is the run history: byte-identical reruns publish
+        # too (storage dedupes the bytes; artifact-sourced lineage keeps the
+        # files panel at one row regardless)
+        client = FakeLineageClient(
+            tracked=[("rev-old-report", rc.REPORT_RESOURCE_TYPE)])
+        report = tmp_path / "r.csv"
+        report.write_text("same content every run\n")
+        rc.record_report_lineage(client, None, self._models(), report,
+                                 branch=SimpleNamespace(tag="baseline"))
+        assert len(writer.updates) == 1
+        assert client.commits == [(("rev-art-2",), ("rev-old-report", "rev-art-2"))]
+
+    def test_duplicate_entries_collapsed_on_rerun(self, tmp_path, capsys,
+                                                  writer):
+        # a stale second entry (e.g. legacy ARTIFACT copy) is un-pinned in the
+        # same commit that re-pins the new revision
+        client = FakeLineageClient(
+            tracked=[("rev-old-report", rc.REPORT_RESOURCE_TYPE),
+                     ("rev-stale-artifact", "ARTIFACT")])
+        report = tmp_path / "r.csv"
+        report.write_text("content\n")
+        rc.record_report_lineage(client, None, self._models(), report,
+                                 branch=SimpleNamespace(tag="baseline"))
+        assert len(writer.updates) == 1
+        assert client.commits == [
+            (("rev-art-2",),
+             ("rev-old-report", "rev-stale-artifact", "rev-art-2"))]
+
+    def test_legacy_artifact_entry_collapsed_into_new_model(self, tmp_path,
+                                                            capsys, writer):
+        # pre-1.1 runs tracked the report as an ARTIFACT; a rerun must create
+        # the MODEL report and un-pin the stale artifact entry in one commit
+        client = FakeLineageClient(tracked=[("rev-old-report", "ARTIFACT")])
+        rc.record_report_lineage(client, None, self._models(), tmp_path / "r.csv",
+                                 branch=SimpleNamespace(tag="baseline"))
+        assert writer.updates == []  # cannot revise an artifact as a model
+        assert [name for name, _ in writer.adds] == ["r.csv"]
+        assert client.commits == [(("rev-art-1",), ("rev-old-report", "rev-art-1"))]
+
+    def test_tracking_failure_keeps_local_copy(self, tmp_path, capsys, writer):
+        client = FakeLineageClient()
+
+        def boom(branch, add=None, remove=None):
+            raise RuntimeError("commit rejected")
+        client.systems.branches.commit = boom
+        report = tmp_path / "r.csv"
+        report.write_text("vendor\n")
+        rc.record_report_lineage(client, None, self._models(), report,
+                                 branch=SimpleNamespace(tag="baseline"),
+                                 remove_local=True)
+        assert report.exists()  # fallback: rides the job's working-dir output
+        assert "could not record report lineage" in capsys.readouterr().err
 
 
 # ----------------------------------------------------------------------------

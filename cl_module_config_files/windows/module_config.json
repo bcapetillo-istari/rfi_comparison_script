@@ -1,0 +1,19 @@
+{
+    "CompareRfiResponseTables": {
+        "executable": "%RFI_MODULE_DIR%/scripts/rfi_compare",
+        "arguments": [
+            "\"%system_id%\"",
+            "--rfi-file",
+            "\"%input_model%\""
+        ],
+        "hidden_parameters": [],
+        "environment": {
+            "RFI_MODULE_DIR": "D:/Users/svc.detools.excel/AppData/Local/istari_agent/istari_modules/rfi_comparison_module",
+            "EXTRACT_FUNCTION": "@istari:extract_tables",
+            "ISTARI_API_URL": "https://fileservice-v2.istari.fences.dso.mil",
+            "ISTARI_CREDENTIALS_PATH": "/opt/local/istari_agent/istari_modules/rfi_comparison_module/.istari_credentials.json",
+            "DEFAULT_JOB_TIMEOUT_S": "3600",
+            "ISTARI_PAT_PATH": "D:/Users/svc.detools.excel/AppData/Local/istari_agent/istari_modules/rfi_comparison_module/.istari_credentials.json"
+        }
+    }
+}
