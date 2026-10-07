@@ -50,7 +50,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from dotenv import load_dotenv
-from istari_digital_client import Configuration
+from istari_digital_client import Client, Configuration, NewSource
 from istari_digital_client.sdk import Istari
 
 # Header cells that name a requirement-ID column (matched by equality) and
@@ -82,6 +82,11 @@ NOT_FOUND_MSG = "Not Found - Manual review required"
 # Report filename (local CSV, uploaded artifact, and branch entry). It
 # contains "table", so find_table_artifacts must exclude it by name.
 REPORT_FILENAME = "RESPONSE_TABLE_COMPARISON.csv"
+# The report is uploaded as a MODEL — the only resource kind whose upload path
+# accepts NewSource lineage; list_response_models excludes it from the vendor
+# set by name. Runs before v1.1 uploaded it as an ARTIFACT; the rerun lookup
+# still matches those entries so they get collapsed into the MODEL one.
+REPORT_RESOURCE_TYPE = "MODEL"
 
 # Keep in sync with pyproject.toml
 VERSION = "1.0.0"
@@ -118,15 +123,17 @@ def is_requirement_id(cell) -> bool:
 
 
 def req_id_key(req_id: str):
-    """Numeric-aware key: '1.11' sorts after '1.2', 'KSA-10' after 'KSA-2',
-    and alphanumeric IDs sort after purely numeric ones."""
+    """Numeric-aware, deterministic sort key: '1.11' sorts after '1.2',
+    'KSA-10' after 'KSA-2', alphanumeric IDs after purely numeric ones, and
+    numerically equal variants ('1.4' vs '1.04') tie-break on the raw text so
+    repeated runs produce identical header rows."""
     parts = []
     for token in re.findall(r"\d+|\D+", str(req_id).strip()):
         if token.isdigit():
             parts.append((0, int(token), ""))
         else:
             parts.append((1, 0, token.lower()))
-    return tuple(parts)
+    return (tuple(parts), str(req_id))
 
 
 def iter_tables(data):
@@ -342,6 +349,8 @@ def list_response_models(
         tracked
         for tracked in client.systems.branches.list_files(branch)
         if type_name(tracked.resource_type) == "MODEL"
+        # the report itself is uploaded as a MODEL; never treat it as a vendor
+        and (tracked.name or "") != REPORT_FILENAME
     ]
     if rfi_file is not None:
         rfi = identify_rfi(models, rfi_file)
@@ -397,95 +406,107 @@ def find_table_artifacts(
 
 def record_report_lineage(
     client: Istari,
-    models: list,
+    config: Configuration,
+    sources: list,
     report_path,
     branch=None,
     remove_local: bool = False,
+    rfi=None,
 ) -> None:
     """Upload the report and record its provenance.
 
-    The report is one artifact whose revision history is the run history:
-    the first run creates and tracks it on the branch, later runs add a
-    revision and re-pin. Each revision gets a 'produces' relationship from
-    every source (RFI + compared responses), tracing it to the exact input
-    revisions. Best-effort: failures are logged, never fatal — on failure the
-    local copy is kept and rides the job's working-directory output.
+    The report is one MODEL whose revision history is the run history: the
+    first run creates and tracks it on the branch, later runs add a revision
+    and re-pin. Lineage rides the upload — each ``sources`` entry (the
+    extracted-table artifacts the matrix was compiled from) is passed as a
+    NewSource, which the registry stores on the revision and materializes as
+    a 'produces' relationship edge from that source's revision. Uploads go
+    through the legacy v2 client built from ``config``, the only upload path
+    that accepts sources (the v3 facade's revision-add has no sources
+    parameter). Best-effort: failures are logged, never fatal — on failure
+    the local copy is kept and rides the job's working-directory output.
+
+    ``sources`` must NOT be revisions of pinned branch files: the System
+    files panel renders every direct product of a pinned revision, so citing
+    the vendor/RFI model revisions would permanently add one panel row per
+    report revision. The table artifacts are themselves products of the PDF
+    revisions, so the full chain (report <- tables <- PDF) stays navigable.
+    The RFI contributes no artifact; pass it as ``rfi`` and it is recorded in
+    the revision description instead of the graph.
+
+    Every run uploads a revision, byte-identical or not — the revision
+    history is the run history. Identical content costs no storage (the
+    object store dedupes by content SHA; its 409 on the upload URL is caught
+    and logged by the SDK, so an ERROR-level ConflictException in the log on
+    no-change reruns is expected noise, not a failure).
     """
     report_name = Path(report_path).name
     try:
+        writer = Client(config=config)
         tracked_reports = []
-        old_revision_id = None
         if branch is not None:
             tracked_reports = [
                 t
                 for t in client.systems.branches.list_files(branch, name=report_name)
                 if (t.name or "") == report_name
-                and type_name(t.resource_type) == "ARTIFACT"
+                and type_name(t.resource_type) in (REPORT_RESOURCE_TYPE, "ARTIFACT")
             ]
-        if tracked_reports:
-            resource_id = tracked_reports[0].resource_id
-            old_revision_id = tracked_reports[0].file_revision_id
-            revision = client.resources.revisions.create(
-                resource_id,
-                report_path,
-                display_name="RFI_RESPONSE_COMPARISON",
-                description="Cross-vendor RFI response comparison matrix",
+        new_sources = [
+            NewSource(
+                revision_id=src.file_revision_id,
+                relationship_identifier="input",
             )
-            log(
-                f"lineage: uploaded new revision of report artifact "
-                f"{resource_id} ({revision.id})"
+            for src in sources
+        ]
+        description = "Cross-vendor RFI response comparison matrix"
+        if rfi is not None:
+            description += (
+                f" (RFI: {rfi.name or rfi.resource_id}, "
+                f"revision {rfi.file_revision_id})"
             )
-        else:
-            artifact = client.resources.create(
-                report_path,
-                "ARTIFACT",
-                display_name="RFI_RESPONSE_COMPARISON",
-                description="Cross-vendor RFI response comparison matrix",
-            )
-            resource_id = artifact.resource_id
-            revision = client.resources.revisions.get(
-                artifact.resource_id, artifact.file_revision_id
-            )
-        type_id = next(
+        meta = dict(
+            display_name="RFI_RESPONSE_COMPARISON",
+            description=description,
+            version_name=time.strftime("run %Y-%m-%d %H:%M:%S"),
+        )
+        existing = next(
             (
-                t.id
-                for t in client.resources.relationships.list_types()
-                if t.name == "produces"
+                t
+                for t in tracked_reports
+                if type_name(t.resource_type) == REPORT_RESOURCE_TYPE
             ),
             None,
         )
-        if type_id is None:
-            log(
-                "warning: lineage: no 'produces' relationship type on this "
-                "registry — report artifact uploaded without lineage edges"
+        if existing is not None:
+            report = writer.update_model(
+                existing.resource_id, report_path, new_sources, **meta
             )
-            return
-        linked = 0
-        for model in models:
-            try:
-                client.resources.relationships.create(
-                    left_revision_id=model.file_revision_id,
-                    right_revision_id=revision.id,
-                    relationship_type_id=type_id,
-                )
-                linked += 1
-            except Exception as e:
-                log(
-                    f"warning: lineage: could not link {vendor_name(model)}: "
-                    f"{e.__class__.__name__}: {e}"
-                )
-        log(
-            f"lineage: report artifact {resource_id} linked to "
-            f"{linked}/{len(models)} source revision(s)"
-        )
+            revision = report.file.revisions[-1]
+            log(
+                f"lineage: uploaded new revision of report model "
+                f"{report.id} ({revision.id}) with {len(new_sources)} source(s)"
+            )
+        else:
+            report = writer.add_model(report_path, new_sources, **meta)
+            revision = report.file.revisions[-1]
+            log(
+                f"lineage: created report model {report.id} "
+                f"({revision.id}) with {len(new_sources)} source(s)"
+            )
         if branch is not None:
             if tracked_reports:
-                # commit's removal matcher may resolve to either the old pin
-                # or the just-uploaded revision; passing both is safe
+                # Un-pin EVERY tracked copy of the report, each by the
+                # revision its branch entry is actually pinned to — this also
+                # collapses duplicate or ARTIFACT-typed copies left behind by
+                # earlier versions. The removal matcher may resolve to either
+                # the old pin or the just-uploaded revision; passing both is
+                # safe (unmatched ids are no-ops).
+                old_pins = [
+                    SimpleNamespace(id=t.current_file_revision_id)
+                    for t in tracked_reports
+                ]
                 client.systems.branches.commit(
-                    branch,
-                    add=[revision],
-                    remove=[SimpleNamespace(id=old_revision_id), revision],
+                    branch, add=[revision], remove=old_pins + [revision]
                 )
                 log(
                     f"lineage: report re-pinned to the new revision on branch "
@@ -498,7 +519,7 @@ def record_report_lineage(
             Path(report_path).unlink()
             log(
                 "lineage: removed working-directory copy — the tracked "
-                "artifact is the single canonical report"
+                "report is the single canonical copy"
             )
     except Exception as e:
         log(f"warning: could not record report lineage: {e.__class__.__name__}: {e}")
@@ -650,13 +671,22 @@ def main() -> int:
     )
 
     # Submit extraction jobs for models that need them, then wait on all of them.
+    # The artifact lookup walks the relationships endpoint, which is the
+    # slowest call in the run — cache it so the compile loop below doesn't
+    # repeat it for every vendor.
+    artifacts_by_model: dict[str, list] = {}
     pending = []
     for model in models:
-        if not args.force and find_table_artifacts(
-            client, model, exclude_name=args.output.name
-        ):
-            log(f"{vendor_name(model)}: reusing existing extracted-table artifacts")
-            continue
+        if not args.force:
+            artifacts = find_table_artifacts(
+                client, model, exclude_name=args.output.name
+            )
+            if artifacts:
+                artifacts_by_model[model.resource_id] = artifacts
+                log(
+                    f"{vendor_name(model)}: reusing existing extracted-table artifacts"
+                )
+                continue
         job = client.jobs.create(resource_id=model.resource_id, function=args.function)
         log(f"{vendor_name(model)}: submitted {args.function} job {job.id}")
         pending.append((model, job))
@@ -683,12 +713,14 @@ def main() -> int:
 
     # Compile each vendor's artifacts into one requirement -> response picture.
     vendors: list[tuple[str, dict]] = []
-    compared_models: list = []
+    used_artifacts: list = []
     labels: dict[str, str] = {}
     for model in models:
-        artifacts = find_table_artifacts(
-            client, model, debug=True, exclude_name=args.output.name
-        )
+        artifacts = artifacts_by_model.get(model.resource_id)
+        if artifacts is None:  # --force, or extraction ran for this model
+            artifacts = find_table_artifacts(
+                client, model, debug=True, exclude_name=args.output.name
+            )
         if not artifacts:
             log(
                 f"warning: {vendor_name(model)}: no extracted-table artifacts found — skipping"
@@ -701,7 +733,7 @@ def main() -> int:
             f"{len(used)} artifact(s): {', '.join(a.name or '?' for a in used)}"
         )
         vendors.append((vendor_name(model), responses))
-        compared_models.append(model)
+        used_artifacts.extend(used)
         for rid, label in names.items():
             labels.setdefault(rid, label)
 
@@ -717,14 +749,20 @@ def main() -> int:
         f"-> {args.output}"
     )
 
-    # lineage sources: the RFI plus every response that fed the matrix
-    sources = ([rfi] if rfi is not None else []) + compared_models
+    # Lineage sources: the extracted-table artifacts the matrix was built
+    # from — deliberately NOT the vendor/RFI model revisions. The files panel
+    # permanently shows every direct product of a pinned revision, so citing
+    # the always-pinned PDFs would add one panel row per run; the artifacts
+    # chain back to the PDFs, preserving full lineage. The RFI (no artifact)
+    # is recorded in the revision description.
     record_report_lineage(
         client,
-        sources,
+        config,
+        used_artifacts,
         args.output,
         branch=branch,
         remove_local=bool(os.environ.get("RFI_MODULE_DIR")),
+        rfi=rfi,
     )
 
     return 0
