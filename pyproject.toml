@@ -17,7 +17,7 @@ rfi-compare = "rfi_compare:main"
 packages = [{ include = "rfi_compare.py" }]
 
 [tool.poetry.group.dev.dependencies]
-pytest = "^8.3"
+pytest = "^9.0"
 
 [tool.poetry.group.build.dependencies]
 pyinstaller = {version = "6.22.2", python = ">=3.10,<3.16"}
