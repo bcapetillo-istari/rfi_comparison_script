@@ -28,9 +28,16 @@ docker run --rm --platform "$PLATFORM" \
         apt-get -o Acquire::Check-Valid-Until=false update -qq
         apt-get install -y -qq --no-install-recommends binutils > /dev/null
         pip install --quiet --upgrade pip
-        # dependencies come from pyproject.toml (poetry-core build backend)
-        pip install --quiet . pyinstaller
-        pyinstaller --onefile --name rfi_compare \
+        # Install through poetry.lock (same as CI) so the binary ships exactly
+        # the pinned, tested dependency set — a bare 'pip install .' would
+        # re-resolve pyproject's version ranges at build time. The container's
+        # venv must NOT land in the mounted repo (it would clobber the host's
+        # macOS .venv), so in-project venvs are disabled here.
+        export POETRY_VIRTUALENVS_IN_PROJECT=false
+        export POETRY_VIRTUALENVS_PATH=/tmp/poetry-venvs
+        pip install --quiet poetry==2.4.2
+        poetry install --only main,build --quiet
+        poetry run pyinstaller --onefile --name rfi_compare \
             --distpath '$OUT' --workpath /tmp/pyi-build --specpath /tmp \
             rfi_compare.py
     "
