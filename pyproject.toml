@@ -1,6 +1,6 @@
 [project]
 name = "rfi-comparison-script"
-version = "1.0.0"
+version = "1.5.1"
 description = "Cross-vendor RFI response table comparison for Istari systems, packaged as a cl_module function"
 authors = [{ name = "Benjamin Capetillo", email = "bcapetillo@istaridigital.com" }]
 readme = "README.md"

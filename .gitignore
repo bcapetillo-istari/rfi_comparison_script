@@ -1,6 +1,7 @@
 # secrets — never commit
 .env
-.istari_credentials.json
+.istari_credentials*.json
+*.pat
 
 # environments
 .venv/

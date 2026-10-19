@@ -31,9 +31,25 @@ becomes an output of the job.
    `" | "` and warned about.
 4. **Report** — correlates requirement IDs across vendors into a wide CSV
    (one column per requirement, one row per vendor, a label row underneath the
-   header) written to the working directory as `rfi_response_comparison.csv`.
-   Nothing is uploaded by the script itself: the cl_module job machinery
-   uploads the working directory as the job's output.
+   header) written as `RESPONSE_TABLE_COMPARISON.csv`, then uploaded as a
+   platform MODEL resource ("RFI_RESPONSE_COMPARISON") with `produces`
+   relationships from each extracted-table artifact revision that fed the
+   matrix — lineage chains report ← tables ← response PDFs, so the report
+   traces to the exact revision of every input. The sources are deliberately
+   the (untracked) artifact revisions, not the pinned PDF/RFI revisions:
+   the System files panel permanently shows every direct product of a pinned
+   revision, so pinned sources would render one extra report row per run.
+   The RFI (which has no artifact) is recorded in each revision's
+   description. The first run creates the report model and tracks it on the
+   system branch; every later run uploads a NEW REVISION — byte-identical or
+   not, the revision history is the run history — and re-pins the branch to
+   it in one commit, so users always find the current comparison in the
+   system next to the documents it compares. In module runs
+   (`RFI_MODULE_DIR` set) the
+   local copy is deleted once the report is safely in the system; if upload
+   or tracking fails, the local copy stays and rides the job's
+   working-directory output as a fallback (with a logged warning). Manual
+   CLI runs always keep the local CSV.
 
 ## Usage
 
@@ -60,7 +76,7 @@ Options:
 | `--branch NAME` | `baseline` | System branch to read models from (falls back to the sole branch) |
 | `--force` | off | Re-run extraction even when table artifacts exist |
 | `--function NAME` | `@istari:extract_tables` | Extraction function to submit |
-| `-o PATH` | `rfi_response_comparison.csv` | Report path |
+| `-o PATH` | `RESPONSE_TABLE_COMPARISON.csv` | Report path |
 | `--job-timeout SECS` | `3600` | Max wait per extraction job |
 
 ### Configuration & authentication
@@ -71,16 +87,25 @@ win):
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `ISTARI_API_URL` | `https://api.dev.istari.app` | Registry to connect to |
-| `ISTARI_CREDENTIALS_PATH` | `.istari_credentials.json` | Identity-service client-credentials JSON (`clientId` / `keyId` / `key`) |
+| `ISTARI_API_URL` | `https://fileservice-v2.dev.istari.app` | Registry to connect to |
 | `EXTRACT_FUNCTION` | `@istari:extract_tables` | Default extraction function (`--function` overrides) |
 | `DEFAULT_JOB_TIMEOUT_S` | `3600` | Default extraction wait (`--job-timeout` overrides) |
 
-In the module, these are set in `module_config.json`'s `environment` block,
-with `ISTARI_CREDENTIALS_PATH` pointing at the credentials file's permanent
-location in the module install directory (`chmod 600`). The credentials are
-read in place — they never enter the job's working directory, which is
-uploaded as a job output.
+In the module, these are set in `module_config.json`'s `environment` block.
+
+Authentication is per-job, not per-install: when launching the function, the
+user opens **Advanced options > Linked account** and picks their Istari PAT
+(saved beforehand under Settings > Linked Accounts as a third-party token).
+The platform delivers it under the reserved input name `auth_info`; the agent
+decrypts it to a short-lived credential file and `module_config.json` passes
+its path as `--auth-file`. The script reads `{"token": ...}` from it and uses
+that PAT as the job's sole credential — nothing is baked into the module
+install. The manifest deliberately declares **no** `auth_info` input: the
+launcher's schema-driven credential picker only offers integration-backed
+accounts (it can't surface third-party tokens), while the Advanced-options
+picker offers every linked account. For manual runs, point `--auth-file` at a
+JSON file shaped `{"token": "<your Istari PAT>"}` (keep it outside the
+working directory, which is uploaded as a job output).
 
 ### Note on viewing the report
 
