@@ -4,14 +4,15 @@
     "arguments": [
       "\"$system_id\"",
       "--rfi-file",
-      "\"$input_model\""
+      "\"$input_model\"",
+      "--auth-file",
+      "\"$auth_info\""
     ],
     "hidden_parameters": [],
     "environment": {
       "RFI_MODULE_DIR": "/opt/local/istari_agent/istari_modules/rfi_comparison_module",
       "EXTRACT_FUNCTION": "@istari:extract_tables",
-      "ISTARI_API_URL": "https://api.dev.istari.app",
-      "ISTARI_CREDENTIALS_PATH": "/opt/local/istari_agent/istari_modules/rfi_comparison_module/.istari_credentials.json",
+      "ISTARI_API_URL": "https://fileservice-v2.dev.istari.app",
       "DEFAULT_JOB_TIMEOUT_S": "3600"
     }
   }

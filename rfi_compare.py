@@ -32,10 +32,15 @@ Vendor responses are passed through untouched: no unit conversion, no rewriting.
 Duplicate requirement IDs within one vendor are joined with ' | ' and warned
 about (this catches numbering typos like a second '1.1' meant as '1.10').
 
+Auth: the launching user's Istari PAT, attached in the launcher under
+Advanced options > Linked account (third-party token) and delivered under the
+reserved input name ``auth_info`` — the manifest deliberately declares no
+auth_info input (the schema-driven picker can't offer third-party tokens).
+
 Usage:
-    rfi_compare SYSTEM_ID --rfi-file "$input_model"     # cl_module job
-    rfi_compare SYSTEM_ID --rfi-id RFI_UUID             # manual run
-    rfi_compare SYSTEM_ID --rfi-file f.pdf --force      # re-extract all
+    rfi_compare SYSTEM_ID --rfi-file "$input_model" --auth-file "$auth_info"
+    rfi_compare SYSTEM_ID --rfi-id RFI_UUID --auth-file cred.json   # manual run
+                                 # (cred.json: {"token": "<your Istari PAT>"})
 """
 
 import argparse
@@ -88,8 +93,8 @@ REPORT_FILENAME = "RESPONSE_TABLE_COMPARISON.csv"
 # still matches those entries so they get collapsed into the MODEL one.
 REPORT_RESOURCE_TYPE = "MODEL"
 
-# Keep in sync with pyproject.toml
-VERSION = "1.0.0"
+# Keep in sync with pyproject.toml and the module manifests
+VERSION = "1.5.1"
 
 
 def log(msg: str) -> None:
@@ -568,21 +573,29 @@ def gather_tables(artifacts, vendor: str = "?"):
     return tables, used
 
 
+def read_auth_file(path) -> str:
+    """Return the Istari PAT from an agent-delivered credential file.
+
+    A @token auth_info input is materialized as a JSON file holding the
+    linked account's secret under "token" (some providers use "api_key").
+    The value is the credential — it must never be logged or written to any
+    job output.
+    """
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    value = data.get("token") or data.get("api_key")
+    if not value:
+        raise ValueError(
+            f"credential file {str(path)!r} contains neither 'token' nor 'api_key'"
+        )
+    return str(value)
+
+
 def main() -> int:
 
     # Load config
     load_dotenv()
     EXTRACT_FUNCTION = os.environ.get("EXTRACT_FUNCTION", "@istari:extract_tables")
-    ISTARI_API_URL = os.environ.get("ISTARI_API_URL", "https://api.dev.istari.app")
-    ISTARI_CREDENTIALS_PATH = os.environ.get(
-        "ISTARI_CREDENTIALS_PATH", ".istari_credentials.json"
-    )
-    # Optional PAT auth: if set, points at a file whose contents are a
-    # personal access token; identity-service auth is skipped entirely.
-    # Demo-environment expedient — identity-service remains the production
-    # mechanism (PATs are long-lived bearer secrets and deprecated on some
-    # registries).
-    ISTARI_PAT_PATH = os.environ.get("ISTARI_PAT_PATH")
+    ISTARI_API_URL = os.environ.get("ISTARI_API_URL", "https://fileservice-v2.dev.istari.app")
     DEFAULT_JOB_TIMEOUT_S = float(os.environ.get("DEFAULT_JOB_TIMEOUT_S", 3600))
 
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
@@ -626,34 +639,42 @@ def main() -> int:
         default=DEFAULT_JOB_TIMEOUT_S,
         help=f"Seconds to wait for each extraction job (default: {DEFAULT_JOB_TIMEOUT_S:g})",
     )
+    ap.add_argument(
+        "--auth-file",
+        type=Path,
+        required=True,
+        help="Path to the linked-account credential JSON delivered by the "
+        'agent for this job (an auth_info input: {"token": ...}); the Istari '
+        "PAT inside is the job's sole credential",
+    )
     args = ap.parse_args()
 
     rfi_ref = (
         f"file:{args.rfi_file}" if args.rfi_file is not None else f"id:{args.rfi_id}"
     )
-    auth = (
-        f"pat (token file: {ISTARI_PAT_PATH})"
-        if ISTARI_PAT_PATH
-        else f"identity-service (credentials: {ISTARI_CREDENTIALS_PATH})"
-    )
     log(
-        f"rfi_compare v{VERSION}: api={ISTARI_API_URL} auth={auth} "
+        f"rfi_compare v{VERSION}: api={ISTARI_API_URL} "
+        f"auth=linked-account (credential file: {args.auth_file}) "
         f"system={args.system_id} "
         f"branch={args.branch} rfi={rfi_ref} function={args.function} "
         f"force={args.force} job-timeout={args.job_timeout:g}s output={args.output}"
     )
 
-    if ISTARI_PAT_PATH:
-        config = Configuration(
-            registry_url=ISTARI_API_URL,
-            registry_auth_token=Path(ISTARI_PAT_PATH).read_text().strip(),
+    try:
+        token = read_auth_file(args.auth_file)
+    except Exception as e:
+        log(f"error: could not read credential file: {e.__class__.__name__}: {e}")
+        log(
+            "error: this job runs as the launching user and needs an Istari "
+            "PAT. In the module launcher, open 'Advanced options' and pick "
+            "your Istari PAT under 'Linked account' (add one first via "
+            "Settings > Linked Accounts > third-party token), then run again."
         )
-    else:
-        config = Configuration(
-            digital_api_url=ISTARI_API_URL,
-            identity_service_secret_file=ISTARI_CREDENTIALS_PATH,
-            identity_service_enabled=True,
-        )
+        return 1
+    config = Configuration(
+        registry_url=ISTARI_API_URL,
+        registry_auth_token=token,
+    )
     client = Istari(config=config)
 
     if args.rfi_file is not None and not args.rfi_file.is_file():
@@ -683,9 +704,7 @@ def main() -> int:
             )
             if artifacts:
                 artifacts_by_model[model.resource_id] = artifacts
-                log(
-                    f"{vendor_name(model)}: reusing existing extracted-table artifacts"
-                )
+                log(f"{vendor_name(model)}: reusing existing extracted-table artifacts")
                 continue
         job = client.jobs.create(resource_id=model.resource_id, function=args.function)
         log(f"{vendor_name(model)}: submitted {args.function} job {job.id}")
