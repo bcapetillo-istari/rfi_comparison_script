@@ -539,6 +539,32 @@ class TestRecordReportLineage:
 
 
 # ----------------------------------------------------------------------------
+# Linked-account credential file (auth_info)
+# ----------------------------------------------------------------------------
+
+class TestReadAuthFile:
+    def test_reads_token(self, tmp_path):
+        p = tmp_path / "cred.json"
+        p.write_text('{"token": "pat-abc123"}')
+        assert rc.read_auth_file(p) == "pat-abc123"
+
+    def test_falls_back_to_api_key(self, tmp_path):
+        p = tmp_path / "cred.json"
+        p.write_text('{"api_key": "key-xyz"}')
+        assert rc.read_auth_file(p) == "key-xyz"
+
+    def test_rejects_file_with_neither(self, tmp_path):
+        p = tmp_path / "cred.json"
+        p.write_text('{"username": "u", "password": "p"}')
+        with pytest.raises(ValueError, match="neither 'token' nor 'api_key'"):
+            rc.read_auth_file(p)
+
+    def test_missing_file_raises(self, tmp_path):
+        with pytest.raises(FileNotFoundError):
+            rc.read_auth_file(tmp_path / "absent.json")
+
+
+# ----------------------------------------------------------------------------
 # Misc helpers
 # ----------------------------------------------------------------------------
 
