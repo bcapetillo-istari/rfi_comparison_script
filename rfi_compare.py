@@ -340,8 +340,23 @@ def identify_rfi(models: list, rfi_file: Path):
     return None
 
 
+# Files whose name contains this marker (case-insensitive) are user
+# documentation attached to the system — e.g. USER_INSTRUCTIONS.html — never
+# vendor responses. Override with INSTRUCTIONS_MARKER / --instructions-marker.
+DEFAULT_INSTRUCTIONS_MARKER = "instructions"
+
+
+def is_instructions_file(name, marker: str = DEFAULT_INSTRUCTIONS_MARKER) -> bool:
+    """True for user-documentation files that must never be processed."""
+    return bool(marker) and marker.lower() in (name or "").lower()
+
+
 def list_response_models(
-    client: Istari, branch, rfi_id: str | None, rfi_file: Path | None
+    client: Istari,
+    branch,
+    rfi_id: str | None,
+    rfi_file: Path | None,
+    instructions_marker: str = DEFAULT_INSTRUCTIONS_MARKER,
 ):
     """Return (response models, RFI model) from the branch's MODEL resources.
 
@@ -350,13 +365,26 @@ def list_response_models(
     excluded from the response list and returned separately (None when it
     could not be identified) so the report's lineage can reference it.
     """
-    models = [
-        tracked
-        for tracked in client.systems.branches.list_files(branch)
-        if type_name(tracked.resource_type) == "MODEL"
+    models, docs = [], []
+    for tracked in client.systems.branches.list_files(branch):
+        if type_name(tracked.resource_type) != "MODEL":
+            continue
         # the report itself is uploaded as a MODEL; never treat it as a vendor
-        and (tracked.name or "") != REPORT_FILENAME
-    ]
+        if (tracked.name or "") == REPORT_FILENAME:
+            continue
+        # user-facing docs on the system are MODELs too (the UI uploader types
+        # everything as Model, and FILE-typed entries don't render in the
+        # files tray) — exclude them by name marker, loudly, so a vendor file
+        # that happens to match is conspicuous rather than silently dropped
+        if is_instructions_file(tracked.name, instructions_marker):
+            docs.append(tracked.name or "?")
+            continue
+        models.append(tracked)
+    if docs:
+        log(
+            f"excluded {len(docs)} documentation file(s) (name contains "
+            f"{instructions_marker!r}): {', '.join(docs)}"
+        )
     if rfi_file is not None:
         rfi = identify_rfi(models, rfi_file)
     else:
@@ -597,6 +625,9 @@ def main() -> int:
     EXTRACT_FUNCTION = os.environ.get("EXTRACT_FUNCTION", "@istari:extract_tables")
     ISTARI_API_URL = os.environ.get("ISTARI_API_URL", "https://fileservice-v2.dev.istari.app")
     DEFAULT_JOB_TIMEOUT_S = float(os.environ.get("DEFAULT_JOB_TIMEOUT_S", 3600))
+    INSTRUCTIONS_MARKER = os.environ.get(
+        "INSTRUCTIONS_MARKER", DEFAULT_INSTRUCTIONS_MARKER
+    )
 
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
     ap.add_argument("system_id", help="Istari System UUID")
@@ -638,6 +669,12 @@ def main() -> int:
         type=float,
         default=DEFAULT_JOB_TIMEOUT_S,
         help=f"Seconds to wait for each extraction job (default: {DEFAULT_JOB_TIMEOUT_S:g})",
+    )
+    ap.add_argument(
+        "--instructions-marker",
+        default=INSTRUCTIONS_MARKER,
+        help="Files whose name contains this (case-insensitive) are user "
+        f"documentation, excluded from processing (default: {INSTRUCTIONS_MARKER})",
     )
     ap.add_argument(
         "--auth-file",
@@ -682,7 +719,13 @@ def main() -> int:
         return 1
 
     branch = get_branch(client, args.system_id, args.branch)
-    models, rfi = list_response_models(client, branch, args.rfi_id, args.rfi_file)
+    models, rfi = list_response_models(
+        client,
+        branch,
+        args.rfi_id,
+        args.rfi_file,
+        instructions_marker=args.instructions_marker,
+    )
     if not models:
         log("error: no response models found on the branch")
         return 1

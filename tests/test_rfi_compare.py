@@ -298,6 +298,44 @@ class TestListResponseModels:
         models, _ = rc.list_response_models(client, branch, None, rfi_file)
         assert sorted(m.resource_id for m in models) == ["a"]
 
+    def test_instructions_files_never_treated_as_vendor(self, tmp_path, capsys):
+        # user docs attached to the system are MODELs (UI uploads type
+        # everything as Model); any name containing the marker is excluded,
+        # and exclusions are logged so a matching vendor file is conspicuous
+        rfi_bytes = b"RFI DOCUMENT"
+        rfi_file = tmp_path / "rfi.pdf"
+        rfi_file.write_bytes(rfi_bytes)
+        branch = SimpleNamespace(tag="baseline")
+        files = [
+            fake_model("rfi.pdf", "rfi-id", rfi_bytes),
+            fake_model("USER_INSTRUCTIONS.html", "docs", b"<html>"),
+            fake_model("User_Instructions.pdf", "docs2", b"%PDF"),
+            fake_model("Assembly_Instructions_Response.pdf", "docs3", b"bbb"),
+            fake_model("vendor_a.pdf", "a", b"aaa"),
+        ]
+        client = fake_client(branches=[branch], files=files)
+        models, _ = rc.list_response_models(client, branch, None, rfi_file)
+        assert sorted(m.resource_id for m in models) == ["a"]
+        err = capsys.readouterr().err
+        assert "excluded 3 documentation file(s)" in err
+        assert "Assembly_Instructions_Response.pdf" in err
+
+    def test_instructions_marker_is_configurable(self, tmp_path):
+        rfi_bytes = b"RFI DOCUMENT"
+        rfi_file = tmp_path / "rfi.pdf"
+        rfi_file.write_bytes(rfi_bytes)
+        branch = SimpleNamespace(tag="baseline")
+        files = [
+            fake_model("rfi.pdf", "rfi-id", rfi_bytes),
+            fake_model("GUIDE_readme.html", "docs", b"<html>"),
+            fake_model("USER_INSTRUCTIONS.html", "kept", b"<html>"),
+            fake_model("vendor_a.pdf", "a", b"aaa"),
+        ]
+        client = fake_client(branches=[branch], files=files)
+        models, _ = rc.list_response_models(
+            client, branch, None, rfi_file, instructions_marker="readme")
+        assert sorted(m.resource_id for m in models) == ["a", "kept"]
+
     def test_unidentified_rfi_warns_and_keeps_all(self, tmp_path, capsys):
         client, branch, _ = self._system(tmp_path)
         stray = tmp_path / "unrelated.pdf"

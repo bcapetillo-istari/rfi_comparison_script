@@ -78,6 +78,7 @@ Options:
 | `--function NAME` | `@istari:extract_tables` | Extraction function to submit |
 | `-o PATH` | `RESPONSE_TABLE_COMPARISON.csv` | Report path |
 | `--job-timeout SECS` | `3600` | Max wait per extraction job |
+| `--instructions-marker TEXT` | `instructions` | Files whose name contains this (case-insensitive) are user docs, excluded from processing (exclusions are logged) |
 
 ### Configuration & authentication
 
@@ -90,6 +91,7 @@ win):
 | `ISTARI_API_URL` | `https://fileservice-v2.dev.istari.app` | Registry to connect to |
 | `EXTRACT_FUNCTION` | `@istari:extract_tables` | Default extraction function (`--function` overrides) |
 | `DEFAULT_JOB_TIMEOUT_S` | `3600` | Default extraction wait (`--job-timeout` overrides) |
+| `INSTRUCTIONS_MARKER` | `instructions` | Documentation-file name marker (`--instructions-marker` overrides) |
 
 In the module, these are set in `module_config.json`'s `environment` block.
 
